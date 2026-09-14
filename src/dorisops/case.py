@@ -7,7 +7,7 @@ import json
 import os
 import secrets
 
-from dorisops.playbook import Command, Playbook, commands_for_node
+from dorisops.playbook import Command, Playbook, commands_for_node, mode_mismatch_note
 
 
 STATUS_AWAITING = "awaiting_evidence"
@@ -43,6 +43,7 @@ class Case:
     updated_at: str | None = None
     evidence: list[dict] = field(default_factory=list)
     refusals: list[dict] = field(default_factory=list)
+    mode_mismatch: bool = False
 
     def to_json(self) -> str:
         return json.dumps(asdict(self), ensure_ascii=False, indent=2) + "\n"
@@ -56,6 +57,7 @@ class Case:
         payload.setdefault("node_id", None)
         payload.setdefault("updated_at", None)
         payload.setdefault("conclusion", None)
+        payload.setdefault("mode_mismatch", False)
         return cls(**payload)
 
 
@@ -82,7 +84,37 @@ def command_dicts(cmds: list[Command]) -> list[dict]:
     ]
 
 
-def open_case(alert: str, mode: str, book: Playbook | None) -> Case:
+def open_case(
+    alert: str,
+    mode: str,
+    book: Playbook | None,
+    mismatch: Playbook | None = None,
+) -> Case:
+    created = utc_now()
+    if book is None and mismatch is not None:
+        return Case(
+            id=new_case_id(),
+            created_at=created,
+            lane="L0",
+            mode=mode,
+            alert=alert,
+            status=STATUS_AWAITING,
+            playbook_id=mismatch.id,
+            playbook_title=mismatch.title,
+            pending_note=mode_mismatch_note(mismatch, mode),
+            essence=mismatch.essence,
+            impact=mismatch.impact,
+            do_now=f"改用 --mode {' / '.join(mismatch.modes)} 后重新开单。当前模式没有可执行命令包。",
+            stop_line=mismatch.stop_line,
+            never_do=mismatch.never_do,
+            commands=[],
+            conclusion=None,
+            node_id=None,
+            updated_at=created,
+            evidence=[],
+            refusals=[],
+            mode_mismatch=True,
+        )
     node_id = book.initial_node_id() if book else None
     cmds: list[Command] = commands_for_node(book, node_id, mode) if book else []
     pending = (
@@ -94,7 +126,6 @@ def open_case(alert: str, mode: str, book: Playbook | None) -> Case:
         node = book.node_map().get(node_id)
         if node and node.pending_note:
             pending = node.pending_note
-    created = utc_now()
     return Case(
         id=new_case_id(),
         created_at=created,
@@ -116,6 +147,7 @@ def open_case(alert: str, mode: str, book: Playbook | None) -> Case:
         updated_at=created,
         evidence=[],
         refusals=[],
+        mode_mismatch=False,
     )
 
 

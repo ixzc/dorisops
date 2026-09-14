@@ -14,7 +14,8 @@ def render(case: Case) -> str:
         f"- 状态: {case.status} / {show_banner(case)}",
         f"- 节点: {case.node_id or '（无判定树）'}",
         f"- 剧本: {case.playbook_id or '（未匹配）'}"
-        + (f" / {case.playbook_title}" if case.playbook_title else ""),
+        + (f" / {case.playbook_title}" if case.playbook_title else "")
+        + (" · 模式不匹配，无命令包" if case.mode_mismatch else ""),
         "",
         "## 待证",
         case.pending_note,
@@ -40,7 +41,10 @@ def render(case: Case) -> str:
         ]
     )
     if not case.commands:
-        lines.append("（无命令。补充告警原文或 playbook 目录后再开单。）")
+        if case.mode_mismatch:
+            lines.append("（当前模式无命令包。请按上面的提示改 --mode 后重新开单，不要补 playbook-dir 硬跑。）")
+        else:
+            lines.append("（无命令。补充告警原文或 playbook 目录后再开单。）")
     for index, command in enumerate(case.commands, start=1):
         restart = "重启前必采" if command["before_restart"] else "可后补"
         lines.extend(

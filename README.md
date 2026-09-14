@@ -9,7 +9,7 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. Stage **S2**: L0 `case open` / `show` / `reply` / `refuse`. No cluster credentials.
+Pre-alpha. Stage **S3**: L0 playbooks split by `integrated` / `cloud`. No cluster credentials.
 
 Local web UI and MCP are not in this commit.
 
@@ -35,6 +35,8 @@ python3 -m pip install -e ".[dev]"   # 3.9+; 3.9/3.10 会自动装 tomli
 ```bash
 dorisops case open --alert "be node down on host X" --mode integrated
 dorisops case open --alert "MemoryUsed 大于 95%" --mode cloud
+dorisops case open --alert "metaservice node down" --mode cloud
+# --mode integrated on a cloud-only alert prints a hint; it will not emit clone/rebalance commands
 ```
 
 JSON is stored under `$DORISOPS_HOME/cases` or `~/.dorisops/cases`.

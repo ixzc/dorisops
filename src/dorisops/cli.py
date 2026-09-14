@@ -13,7 +13,7 @@ from dorisops.case import (
     save_case,
 )
 from dorisops.engine import refuse_case, reply_case
-from dorisops.playbook import PlaybookError, load_all, match
+from dorisops.playbook import PlaybookError, load_all, match_alert
 from dorisops.render import render
 
 
@@ -105,12 +105,12 @@ def _cmd_open(args: argparse.Namespace) -> int:
     except PlaybookError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
-    book = match(args.alert, args.mode, books)
-    case = open_case(args.alert, args.mode, book)
+    hit = match_alert(args.alert, args.mode, books)
+    case = open_case(args.alert, args.mode, hit.book, mismatch=hit.mismatch)
     path = save_case(case, _store(args))
     sys.stdout.write(render(case))
     sys.stdout.write(f"saved: {path}\n")
-    return 0 if book else 2
+    return 0 if hit.book else 2
 
 
 def _cmd_show(args: argparse.Namespace) -> int:
@@ -137,7 +137,7 @@ def _cmd_reply(args: argparse.Namespace) -> int:
         return 2
     text = path.read_text(encoding="utf-8", errors="replace")
     book = None
-    if case.playbook_id:
+    if case.playbook_id and not case.mode_mismatch:
         book = next((item for item in books if item.id == case.playbook_id), None)
     try:
         reply_case(case, text, str(path), book)

@@ -1,0 +1,56 @@
+id = "metaservice-down"
+title = "MetaService node down"
+modes = ["cloud"]
+priority = 110
+essence = "存算分离里的 MetaService（进程常见 selectdb_cloud / apache 构建名 doris_cloud，角色 --meta-service）把 brpc 地址注册到 FDB。告警「node down」不等于进程已退出：采集失败、网络分区、lease 续约失败都可能触发。一体（shared-nothing）集群没有这套组件。"
+impact = "单实例 down 时其他 MS 通常能接续（状态在 FDB）。全部 MS 不可用时，事务 begin/commit、tablet/rowset 元数据、集群资源操作都会停。"
+do_now = "确认告警节点、同组其他 MS 是否还在、客户是否已有 DDL/导入提交失败。本机采进程、brpc 端口和 /status。不要先重启。"
+stop_line = "客户元数据操作大量失败、已无健康 MS 冗余时按紧急事件处理。先同步业务方。"
+never_do = "不要只凭 node down 就重启 MS。不要在 FDB 异常时循环重启。不要同时重启多个 MS。不要在一体集群上对这条告警做 clone 或 disk rebalance。"
+pending_note = "本单尚未收到 MS 采集回贴。不要把告警标题当成进程已死。"
+
+[[matchers]]
+pattern = "meta\\s*service.{0,40}(down|dead|offline)"
+
+[[matchers]]
+pattern = "(?<![\\w])ms(?![\\w])\\s+node\\s+down"
+
+[[matchers]]
+pattern = "metaservice.*(down|not alive)"
+
+[[commands]]
+id = "ms-proc-ports"
+where = "跳板机 → 告警 MS 主机或容器（本机采集目录）"
+before_restart = true
+language = "bash"
+body = """
+pgrep -af 'selectdb_cloud|doris_cloud' > msproc.txt
+MS_PID=<从 msproc.txt 里带 --meta-service 的 PID>
+ps -o pid,etime,nlwp,%cpu,%mem,rss,cmd -p "$MS_PID" >> msproc.txt
+ss -lntp > msports.txt
+"""
+look_for = "进程是否在；cmd 是否同时有 --meta-service / --recycler（都不传时常见双开）；brpc 端口（常见 5000）是否 LISTEN。进程在但采集失败 ≠ 该重启。"
+
+[[commands]]
+id = "ms-status"
+where = "跳板机 → 告警 MS 本机回环；端口以 conf 里 brpc_listen_port 为准，默认 5000"
+before_restart = true
+language = "bash"
+body = """
+MS_PORT=<brpc_listen_port>
+curl -sS --max-time 5 "http://127.0.0.1:$MS_PORT/status" > ms-status.html
+echo "curl_exit=$?" >> ms-status.html
+"""
+look_for = "/status 能通说明 brpc 服务面还在。页面里应能看到 MetaService。不要用一体机的 clone / disk rebalance 命令。"
+
+[[commands]]
+id = "ms-logs"
+where = "跳板机 → MS 日志目录（只读）"
+before_restart = false
+language = "bash"
+body = """
+# glog basename 按角色：meta_service.INFO / meta_service.WARNING；stdout 常见 selectdb_cloud.out
+grep -E 'try to start|successfully init txn kv|has been started|failed to commit registry|failed to init' \\
+  meta_service.INFO meta_service.WARNING 2>/dev/null | tail -n 200
+"""
+look_for = "启动里程碑是否齐全；failed to commit registry 且进程仍在 = 续约问题，不是「先重启」。不要按 doris_cloud.INFO 这个不存在的文件名去找日志。"

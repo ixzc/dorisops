@@ -198,18 +198,56 @@ def load_all(extra_dirs: list[Path] | None = None) -> list[Playbook]:
     return books
 
 
+@dataclass
+class MatchHit:
+    book: Playbook | None = None
+    mismatch: Playbook | None = None
+
+
 def match(alert: str, mode: str, books: list[Playbook]) -> Playbook | None:
-    ranked: list[tuple[int, Playbook]] = []
+    return match_alert(alert, mode, books).book
+
+
+def match_alert(alert: str, mode: str, books: list[Playbook]) -> MatchHit:
+    compatible: list[tuple[int, Playbook]] = []
+    incompatible: list[tuple[int, Playbook]] = []
     for book in books:
-        if mode not in book.modes:
-            continue
         score = book.score(alert)
-        if score > 0:
-            ranked.append((score, book))
-    if not ranked:
-        return None
-    ranked.sort(key=lambda item: (-item[0], item[1].id))
-    return ranked[0][1]
+        if score <= 0:
+            continue
+        if mode in book.modes:
+            compatible.append((score, book))
+        else:
+            incompatible.append((score, book))
+    hit = MatchHit()
+    if compatible:
+        compatible.sort(key=lambda item: (-item[0], item[1].id))
+        hit.book = compatible[0][1]
+        return hit
+    if incompatible:
+        incompatible.sort(key=lambda item: (-item[0], item[1].id))
+        hit.mismatch = incompatible[0][1]
+    return hit
+
+
+def mode_mismatch_note(book: Playbook, mode: str) -> str:
+    allowed = " / ".join(book.modes)
+    if mode == "integrated" and "cloud" in book.modes and "integrated" not in book.modes:
+        return (
+            f"这是云模式（存算分离）告警，命中剧本 `{book.id}` / {book.title}。"
+            f"当前 --mode integrated。请改 `--mode cloud` 后重新开单。"
+            f"不要在一体集群上对这类告警做本地 clone 或 disk rebalance。"
+        )
+    if mode == "cloud" and "integrated" in book.modes and "cloud" not in book.modes:
+        return (
+            f"这是一体（shared-nothing）剧本 `{book.id}` / {book.title}。"
+            f"当前 --mode cloud。请改 `--mode integrated`，或确认告警不是该类型。"
+            f"云上不要套本地 clone / disk rebalance。"
+        )
+    return (
+        f"告警文本命中 `{book.id}`，该剧本只适用于 {allowed}，当前是 {mode}。"
+        f"请改 --mode 后重新开单。不要编造集群状态。"
+    )
 
 
 def commands_for_mode(book: Playbook, mode: str) -> list[Command]:

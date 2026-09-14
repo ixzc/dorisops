@@ -15,6 +15,23 @@ def reply_case(case: Case, text: str, source: str, book: Playbook | None) -> Cas
     snippet = text.strip()
     if not snippet:
         raise ValueError("reply text is empty")
+    if case.mode_mismatch:
+        case.pending_note = (
+            "这张单是模式不匹配开出来的，回贴不会推进判定树，也不会补命令。"
+            "请改 --mode 后重新开单。"
+        )
+        case.evidence.append(
+            {
+                "at": utc_now(),
+                "source": source,
+                "node_id": case.node_id,
+                "matched_advance": None,
+                "text": snippet,
+            }
+        )
+        case.updated_at = utc_now()
+        case.conclusion = None
+        return case
     matched = None
     next_id = case.node_id
     if book is not None and not book.nodes:
@@ -74,6 +91,8 @@ def refuse_case(case: Case, reason: str) -> Case:
 
 
 def show_banner(case: Case) -> str:
+    if case.mode_mismatch:
+        return "模式不匹配"
     if case.refusals and case.status == STATUS_BLOCKED:
         return "打开（已拒绝执行）"
     if case.status == STATUS_AWAITING and not case.evidence:

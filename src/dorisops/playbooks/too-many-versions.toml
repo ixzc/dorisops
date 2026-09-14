@@ -1,0 +1,64 @@
+id = "too-many-versions"
+title = "Too many versions (-235)"
+modes = ["integrated", "cloud"]
+priority = 95
+essence = "BE 在写入前检查 tablet 的 version 数量。超过 max_tablet_version_num（默认 2000）就返回 -235 / too many versions。这是 compaction 跟不上导入，不是「磁盘坏了」。"
+impact = "命中的 tablet 写入失败；查询仍可能读旧版本。持续堆积会拖垮 compaction 和磁盘。"
+do_now = "记下 table/tablet、导入是否突然加量。拉 BE compaction 指标和 tablet 版本数。先降导入频次，不要先改 max_tablet_version_num。"
+stop_line = "大面积导入失败、compaction score 持续攀升、磁盘打满时按紧急事件处理。"
+never_do = "不要把提高 max_tablet_version_num 当根治。不要在云模式做本地 replica clone / disk rebalance 来消 -235。不要批量 rebuild tablet。本工具不会 SET/ALTER。"
+pending_note = "本单尚未收到 compaction/版本数回贴。不要把 -235 告警写成已经确认的磁盘故障。"
+
+[[matchers]]
+pattern = "too\\s+many\\s+versions"
+
+[[matchers]]
+pattern = "(?:error\\s*)?-235\\b"
+
+[[matchers]]
+pattern = "max_tablet_version_num"
+
+[[matchers]]
+pattern = "版本过多|版本数过多"
+
+[[commands]]
+id = "be-compaction-metrics"
+where = "跳板机 → 告警 BE HTTP（webserver_port，默认 8040）"
+before_restart = false
+language = "bash"
+body = """
+curl -sS --max-time 10 "http://<be_host>:8040/metrics" | grep -E 'compaction|tablet_version' | head -n 80
+"""
+look_for = "compaction 积压、score、失败次数。没有回贴前不能说 compaction 线程不够。"
+
+[[commands]]
+id = "show-partitions"
+where = "SQL 控制台（只读）"
+before_restart = false
+language = "sql"
+body = """
+SHOW PARTITIONS FROM <db>.<table>;
+"""
+look_for = "VisibleVersion / 分区版本是否异常偏高。表名来自报错，不要扫全集群。"
+
+[[commands]]
+id = "cluster-health-local"
+where = "SQL 控制台（只读，仅一体 shared-nothing）"
+before_restart = false
+language = "sql"
+modes = ["integrated"]
+body = """
+SHOW PROC '/cluster_health/tablet_health';
+"""
+look_for = "一体集群可看 replica/tablet 健康。云模式不会打印这条；云上 clone/disk rebalance 没有意义。"
+
+[[commands]]
+id = "cloud-compaction-path"
+where = "SQL 控制台（只读，仅存算分离）"
+before_restart = false
+language = "sql"
+modes = ["cloud"]
+body = """
+SHOW COMPUTE GROUPS;
+"""
+look_for = "云上 compaction 跑在 compute BE 上，数据在对象存储。不要做本地 clone 或 disk rebalance。看该 compute group 是否只剩过载节点。"

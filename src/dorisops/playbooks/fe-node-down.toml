@@ -1,0 +1,53 @@
+id = "fe-node-down"
+title = "FE node down"
+modes = ["integrated", "cloud"]
+priority = 100
+essence = "Master FE 按 rpc_port 心跳判断其他 FE 是否存活。FE 心跳当轮失败就会标 Alive=false（没有 BE 那种再 ping 一次）。告警标题不是已核实的进程退出。"
+impact = "FOLLOWER 下线会减少写元数据的仲裁席位；OBSERVER 下线主要掉读/接入容量；Master 下线会选主，剩下 FOLLOWER 不足多数派时 SQL 和元数据写入可能不可用。"
+do_now = "在任一还能连的 FE 上跑只读 SHOW FRONTENDS。目标机采进程、监听端口。确认客户 SQL 是否真的失败。不要先重启。"
+stop_line = "已经没有 Master、FOLLOWER 不足多数派、连接持续失败时按紧急事件处理。"
+never_do = "不要只凭监控重启 FE。不要未看 Role/IsMaster 就动手。不要强制选主、增删 FE、改 BDBJE 成员或 image/journal。本工具不会连集群。"
+pending_note = "本单尚未收到 SHOW FRONTENDS 或进程回贴。不要把告警标题当成 Alive=false 已核实。"
+
+[[matchers]]
+pattern = "(?<![\\w])fe(?![\\w])\\s+node\\s+down"
+
+[[matchers]]
+pattern = "frontend.{0,40}(down|dead|not alive|offline)"
+
+[[matchers]]
+pattern = "(?<![\\w])fe(?![\\w]).{0,40}not\\s+alive"
+
+[[commands]]
+id = "show-frontends"
+where = "SQL 控制台（只读，任一可连 FE）"
+before_restart = true
+language = "sql"
+body = """
+SHOW FRONTENDS;
+"""
+look_for = "下线 FE 的 Role、IsMaster、Alive、Join、ErrMsg；健康 FOLLOWER 是否仍过半数。输出回贴前不能当结论。"
+
+[[commands]]
+id = "fe-proc-ports"
+where = "跳板机 → 告警 FE 主机或容器"
+before_restart = true
+language = "bash"
+body = """
+pgrep -af 'org.apache.doris.DorisFE' > feproc.txt
+FE_PID=<从 feproc.txt 确认的 PID>
+ps -o pid,etime,nlwp,%cpu,%mem,rss,cmd -p "$FE_PID" >> feproc.txt
+ss -lntp > fe-ports.txt
+"""
+look_for = "进程是否在；etime 是否很短；query/rpc/http 端口是否 LISTEN。HttpPort 以 SHOW FRONTENDS 为准（内核默认 8030，部分云部署是 8080）。"
+
+[[commands]]
+id = "fe-logs"
+where = "跳板机 → 目标 FE 与当前 Master 日志目录（只读）"
+before_restart = false
+language = "bash"
+body = """
+# 文件名常见 fe.log / fe.warn.log / fe.out
+grep -E 'heartbeat|Alive|BDBJE|not ready|OutOfMemory' fe.log fe.warn.log fe.out 2>/dev/null | tail -n 200
+"""
+look_for = "目标 FE 的退出/未就绪/OOM；Master 侧对该 FE 的心跳 ErrMsg。不要改 edit_log 或成员列表。"

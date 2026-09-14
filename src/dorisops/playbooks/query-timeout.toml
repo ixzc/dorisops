@@ -1,0 +1,45 @@
+id = "query-timeout"
+title = "Query timeout"
+modes = ["integrated", "cloud"]
+priority = 80
+essence = "这是查询超过超时阈值被取消，不是一条固定的内核 bug。先拿到 query_id，用 Profile 和 audit 看卡在哪一段（规划、执行、Exchange、对象存储）。"
+impact = "该语句失败；同一套慢计划可能把 BE 线程和内存占住，连累别的查询。"
+do_now = "从客户端/audit 抄 query_id、开始时间、库表。拉 Profile 和 audit 行。不要先调大 query_timeout 当根治。"
+stop_line = "大面积查询失败、BE 线程打满、导入也被拖死时按紧急事件处理。"
+never_do = "不要没有 Profile 就猜「集群慢」。不要 SET GLOBAL 超时、杀无关查询、改会话变量当本工具的动作。L0 只出采集命令。"
+pending_note = "本单尚未收到 Profile/audit 回贴。不要把超时告警写成已经定位的瓶颈。"
+
+[[matchers]]
+pattern = "query\\s*timeout"
+
+[[matchers]]
+pattern = "查询超时"
+
+[[matchers]]
+pattern = "timeout\\s+executing\\s+query"
+
+[[matchers]]
+pattern = "errcode\\s*=\\s*-1.*timeout"
+
+[[commands]]
+id = "fe-audit-query"
+where = "跳板机 → FE 日志目录（只读）"
+before_restart = false
+language = "bash"
+body = """
+QUERY_ID=<query_id>
+grep -F "$QUERY_ID" fe.audit.log | tail -n 20
+"""
+look_for = "QueryTime、State、ScanBytes、返回行数、错误码。没有这一行不能编造耗时。"
+
+[[commands]]
+id = "fe-profile"
+where = "FE HTTP（只读；HttpPort 以 SHOW FRONTENDS 为准，默认 8030）"
+before_restart = false
+language = "bash"
+body = """
+QUERY_ID=<query_id>
+FE_HTTP="<fe_host>:<http_port>"
+curl -sS --max-time 15 "http://$FE_HTTP/api/profile?query_id=$QUERY_ID" > query-profile.txt
+"""
+look_for = "最慢 operator、Exchange、扫描、对象存储/HDFS 耗时。Profile 拉不到时不要编瓶颈。云上还要看是否在等 MS get_version 或 file cache miss。"

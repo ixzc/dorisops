@@ -1,0 +1,65 @@
+id = "memory-pressure"
+title = "Memory pressure"
+modes = ["integrated", "cloud"]
+priority = 90
+essence = "这是内存水位告警，不是 Doris 内核抛出的一条固定错误。先分清口径：节点 used/total、容器 working_set/limit、进程 RSS、FE JVM heap。BE 自己的软/硬限是另一套数字，不要和节点 95% 混为一谈。"
+impact = "95% 只表示容量紧。真正伤业务的是后续 OOM、重启、查询/导入失败或持续换页。BE 触硬限后新分配可能直接失败并 cancel 大查询/导入。"
+do_now = "确认告警分母（节点/容器/进程/JVM）。看是否已经 OOM 或反复重启。业务还在时先采进程 RSS、/proc/meminfo，BE 再拉 :8040/profile，不要用已经下线的 /mem_tracker。"
+stop_line = "查询/导入大面积失败、进程无响应、OOM 或反复重启时按紧急事件处理。未经同意不要抓长时间 pstack。"
+never_do = "不要把节点 used、Pod working_set、进程 RSS、BE tracker、FE heap 当成同一个数。不要擅自 kill 查询/load、改内存参数或批量重启。不要打开 /mem_tracker（已下线，入口是 /profile）。"
+pending_note = "本单尚未收到内存采集回贴。不要把「MemoryUsed 大于 95%」写成已经核实的进程 OOM。"
+
+[[matchers]]
+pattern = "memoryused"
+
+[[matchers]]
+pattern = "memory\\s*used"
+
+[[matchers]]
+pattern = "mem(ory)?[^\\n]{0,40}95\\s*%"
+
+[[matchers]]
+pattern = "内存.{0,20}95"
+
+[[commands]]
+id = "host-process-memory"
+where = "跳板机 → 告警节点或容器"
+before_restart = true
+language = "bash"
+body = """
+ps -eo pid,ppid,etime,nlwp,%cpu,%mem,rss,vsz,comm --sort=-rss | head -30 > memory-process.txt
+cat /proc/meminfo > memory-host.txt
+cat /proc/swaps >> memory-host.txt
+"""
+look_for = "RSS Top 是不是 doris_be / java。MemAvailable、Swap。节点水位常用 (MemTotal-MemAvailable)/MemTotal，这仍不能直接当成 BE tracker。"
+
+[[commands]]
+id = "be-profile-memory"
+where = "跳板机 → BE HTTP（webserver_port，默认 8040）"
+before_restart = true
+language = "bash"
+body = """
+curl -sS --max-time 10 "http://<be_host>:8040/profile" > memory-be-profile.html
+"""
+look_for = "页面里的 MemoryProfile / Memory Info（MemLimit、SoftMemLimit、VmRSS）。不要请求 /mem_tracker。"
+
+[[commands]]
+id = "current-queries"
+where = "SQL 控制台（只读）"
+before_restart = false
+language = "sql"
+body = """
+SHOW PROC '/current_queries';
+"""
+look_for = "是否有超长、超大内存的查询占着进程。输出回贴前不能当结论。"
+
+[[commands]]
+id = "file-cache-hint"
+where = "跳板机 → BE HTTP metrics（仅存算分离，只读）"
+before_restart = false
+language = "bash"
+modes = ["cloud"]
+body = """
+curl -sS --max-time 10 "http://<be_host>:8040/metrics" | grep -E 'file_cache|local_cache' | head
+"""
+look_for = "云上 file cache 可能占盘占内存。一体模式不会打印这条。没有回贴前不要说 cache 打满。"

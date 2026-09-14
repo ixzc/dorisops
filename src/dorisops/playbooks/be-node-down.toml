@@ -1,0 +1,66 @@
+id = "be-node-down"
+title = "BE node down"
+modes = ["integrated", "cloud"]
+priority = 100
+essence = "FE master 按心跳判断 BE 是否存活：默认打 BE heartbeat 端口（常见 9050）。一轮失败会再 ping 一次；失败次数达到容忍阈值（默认 1）后把该 BE 标为不存活。这是告警标题，不是已核实的进程状态。"
+impact = "新查询/导入会避开不存活 BE。该 BE 上已在跑的 fragment 可能失败。失联足够久后，FE 可能 abort 由该 BE 协调的事务。元数据一般不受影响。"
+do_now = "记下 BackendId / 主机、告警时间。在告警 BE 本机采进程、监听端口、本机 /api/health；同时在 SQL 控制台跑一次只读 SHOW BACKENDS。本机 health 正常时不要急着重启，先看 ErrMsg 是不是心跳链路。"
+stop_line = "查询或导入已经大面积失败、多个 BE 同时不存活、BE 进程退出或无响应时，按紧急事件处理。先同步业务方，再考虑单节点恢复。"
+never_do = "不要一次重启多个 BE。不要只凭一条心跳告警就 DROP BACKEND 再 ADD。不要在业务受损时先抓长时间 pstack/perf。本工具不会连集群，也不要假装已经查过 Alive。"
+pending_note = "本单尚未收到任何采集回贴。不要根据告警标题得出「集群已确认 BE 宕机」或「Alive=false 已核实」。"
+
+[[matchers]]
+pattern = "(?<![\\w])be(?![\\w])\\s+node\\s+down"
+
+[[matchers]]
+pattern = "(?<![\\w])be(?![\\w]).{0,80}(not\\s+alive|offline)"
+
+[[matchers]]
+pattern = "backend.{0,40}(down|dead|not\\s+alive|offline)"
+
+[[commands]]
+id = "be-proc-ports"
+where = "跳板机 → 告警 BE 主机或容器（本机采集目录）"
+before_restart = true
+language = "bash"
+body = """
+pgrep -af 'doris_be' > beproc.txt
+BE_PID=<从 beproc.txt 确认后的 PID>
+ps -o pid,etime,nlwp,%cpu,%mem,rss,cmd -p "$BE_PID" >> beproc.txt
+ss -lntp > beports.txt
+"""
+look_for = "是否有 doris_be 进程；etime 是否短（刚重启）；beports.txt 里心跳端口（默认 9050）和 HTTP 端口（默认 8040）是否 LISTEN。进程不在或端口消失 = 进程/容器故障，仍不是 FE 侧 Alive 的最终结论。"
+
+[[commands]]
+id = "be-health"
+where = "跳板机 → 告警 BE 本机回环；端口以 SHOW BACKENDS 的 HttpPort 为准，默认 8040"
+before_restart = true
+language = "bash"
+body = """
+BE_HTTP_PORT=<confirmed_http_port>
+curl -sS --max-time 5 -o be-health.txt -w 'http_code=%{http_code} total_time=%{time_total}\\n' \\
+  "http://127.0.0.1:$BE_HTTP_PORT/api/health" > be-health-result.txt
+echo "curl_exit=$?" >> be-health-result.txt
+"""
+look_for = "必须读 body，不要只看 HTTP 状态码（不少版本恒 200）。正常常见 status=OK。连接失败只说明本机 HTTP 不通。3.0 早期 cloud 的 /api/health 可能几乎总是 OK，那种版本要靠进程+端口+日志，不能单靠 health。"
+
+[[commands]]
+id = "show-backends"
+where = "SQL 控制台（只读）"
+before_restart = false
+language = "sql"
+body = """
+SHOW BACKENDS;
+"""
+look_for = "告警 BackendId 那一行的 Alive、LastHeartbeat、ErrMsg、HeartbeatFailureCounter。没有 RunningTasks 列；运行中任务看 Status JSON 里的 currentFragmentNum。本命令的输出要回贴后才能当证据。"
+
+[[commands]]
+id = "show-compute-groups"
+where = "SQL 控制台（只读，仅存算分离）"
+before_restart = false
+language = "sql"
+modes = ["cloud"]
+body = """
+SHOW COMPUTE GROUPS;
+"""
+look_for = "告警 BE 所在 compute group 是否还有其他可用节点。一体模式不会打印这条命令。"

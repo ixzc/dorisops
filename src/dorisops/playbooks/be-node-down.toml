@@ -8,6 +8,7 @@ do_now = "记下 BackendId / 主机、告警时间。在告警 BE 本机采进�
 stop_line = "查询或导入已经大面积失败、多个 BE 同时不存活、BE 进程退出或无响应时，按紧急事件处理。先同步业务方，再考虑单节点恢复。"
 never_do = "不要一次重启多个 BE。不要只凭一条心跳告警就 DROP BACKEND 再 ADD。不要在业务受损时先抓长时间 pstack/perf。本工具不会连集群，也不要假装已经查过 Alive。"
 pending_note = "本单尚未收到任何采集回贴。不要根据告警标题得出「集群已确认 BE 宕机」或「Alive=false 已核实」。"
+start_node = "round-1"
 
 [[matchers]]
 pattern = "(?<![\\w])be(?![\\w])\\s+node\\s+down"
@@ -64,3 +65,54 @@ body = """
 SHOW COMPUTE GROUPS;
 """
 look_for = "告警 BE 所在 compute group 是否还有其他可用节点。一体模式不会打印这条命令。"
+
+[[commands]]
+id = "be-logs-heartbeat"
+where = "跳板机 → 告警 BE 日志目录（只读）"
+before_restart = false
+language = "bash"
+body = """
+# 时间窗：告警前后各 15 分钟。日志名以部署为准（常见 be.INFO / be.WARNING）。
+grep -E 'heartbeat|HeartbeatService|BE.*down|not alive' be.INFO be.WARNING 2>/dev/null | tail -n 200
+"""
+look_for = "进程是否在心跳前后退出、是否有 HeartbeatService 报错。日志回贴前不能写成已经确认宕机原因。"
+
+[[commands]]
+id = "probe-heartbeat-port"
+where = "能访问该 BE 心跳端口的主机（常见从 FE 或同 VPC，只读探测）"
+before_restart = false
+language = "bash"
+body = """
+BE_HOST=<alert_be_host>
+BE_HB_PORT=<heartbeat_port_from_show_backends>
+nc -zv -w 3 "$BE_HOST" "$BE_HB_PORT"
+"""
+look_for = "本机 health 正常但 Alive=false 时，优先怀疑 FE→BE 心跳端口（默认 9050）不通。探测失败不是允许 DROP BACKEND 的理由。"
+
+[[nodes]]
+id = "round-1"
+title = "第一轮采集"
+commands = ["be-proc-ports", "be-health", "show-backends", "show-compute-groups"]
+pending_note = "本单尚未收到任何采集回贴。不要根据告警标题得出「集群已确认 BE 宕机」或「Alive=false 已核实」。"
+
+[[nodes.advances]]
+pattern = "(?s)\\bAlive\\b.{0,800}\\bfalse\\b"
+next = "fe-marked-dead"
+note = "回贴文本里出现 Alive=false，这是 FE 心跳口径，不是程序查出来的。下一轮对照本机进程/health 与心跳端口，不要急着重启。"
+
+[[nodes.advances]]
+pattern = "(?s)\\bAlive\\b.{0,800}\\btrue\\b"
+next = "still-alive"
+note = "回贴文本里 Alive 仍为 true。先看 ErrMsg / HeartbeatFailureCounter，不要把告警标题当成进程已死。"
+
+[[nodes]]
+id = "fe-marked-dead"
+title = "FE 已标不存活"
+commands = ["be-logs-heartbeat", "probe-heartbeat-port"]
+pending_note = "FE 侧已回贴为不存活。下一轮采 BE 日志和心跳端口探测；没有这些回贴前不要给根因。"
+
+[[nodes]]
+id = "still-alive"
+title = "FE 仍标存活"
+commands = ["probe-heartbeat-port"]
+pending_note = "FE 仍标存活。下一轮只做心跳端口探测。没有回贴前不要写集群已经恢复或已经故障。"

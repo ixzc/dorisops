@@ -9,7 +9,7 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. Stage **S1**: L0 `case open` works without cluster credentials.
+Pre-alpha. Stage **S2**: L0 `case open` / `show` / `reply` / `refuse`. No cluster credentials.
 
 Local web UI and MCP are not in this commit.
 
@@ -38,6 +38,16 @@ dorisops case open --alert "MemoryUsed 大于 95%" --mode cloud
 ```
 
 JSON is stored under `$DORISOPS_HOME/cases` or `~/.dorisops/cases`.
+
+```bash
+dorisops case show   CASE-xxxx
+dorisops case reply  CASE-xxxx --output-file show-backends.txt
+dorisops case refuse CASE-xxxx --reason "no jumphost"
+```
+
+`show` before any reply only says the case is waiting. It will not invent `Alive=false`.
+`reply` matches keywords (for example `Alive false` in `SHOW BACKENDS` text) and prints the next command pack.
+`refuse` keeps the case open and records the reason.
 
 `--mode integrated` hides cloud-only commands (for example `SHOW COMPUTE GROUPS`).
 `--mode cloud` keeps them.

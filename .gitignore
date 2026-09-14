@@ -1,0 +1,29 @@
+# Secrets and local cluster credentials
+.env
+.env.*
+!.env.example
+cluster.yaml
+*.pem
+*.key
+
+# Local case store (S1+)
+/cases/
+*.db
+*.sqlite
+
+# Python
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# OS / IDE
+.DS_Store
+.idea/
+.vscode/

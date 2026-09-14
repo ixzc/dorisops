@@ -1,0 +1,21 @@
+# Copy to cluster.yaml (gitignored) when you enable L1 read-only inspect.
+# P0–P1 never execute writes. Leave this file unused for L0 diagnosis cases.
+
+name: lab
+# integrated = shared-nothing FE/BE
+# cloud      = storage-compute separation (MetaService / compute groups)
+mode: integrated  # integrated | cloud
+
+fe:
+  mysql_host: 127.0.0.1
+  mysql_port: 9030
+  mysql_user: READONLY_USER
+  mysql_password: CHANGE_ME
+  http_url: http://127.0.0.1:8030
+
+backends:
+  - http_url: http://127.0.0.1:8040
+
+# Cloud only. Omit entirely for integrated clusters.
+# meta_service:
+#   http_url: http://127.0.0.1:5000

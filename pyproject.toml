@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dorisops"
+version = "0.1.0.dev0"
+description = "Read-only AI ops workbench for Apache Doris (integrated and cloud)."
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.11"
+authors = [{ name = "Zhenchao Xu" }]
+keywords = ["apache-doris", "sre", "observability", "mcp"]
+classifiers = [
+  "Development Status :: 2 - Pre-Alpha",
+  "License :: OSI Approved :: Apache Software License",
+  "Programming Language :: Python :: 3",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.urls]
+Homepage = "https://github.com/ixzc/dorisops"
+Issues = "https://github.com/ixzc/dorisops/issues"
+
+[tool.setuptools.packages.find]
+where = ["src"]

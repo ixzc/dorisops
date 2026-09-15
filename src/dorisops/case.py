@@ -50,6 +50,8 @@ class Case:
 
     @classmethod
     def from_dict(cls, data: dict) -> Case:
+        if not isinstance(data, dict):
+            raise TypeError("case json must be an object")
         known = {key.name for key in cls.__dataclass_fields__.values()}
         payload = {key: value for key, value in data.items() if key in known}
         payload.setdefault("evidence", [])
@@ -171,6 +173,18 @@ def find_case_path(store: Path, case_id: str) -> Path:
         raise CaseStoreError(f"case not found: {token}")
     names = ", ".join(path.stem for path in matches)
     raise CaseStoreError(f"ambiguous case id {token!r}: {names}")
+
+
+def list_cases(store: Path) -> list[Case]:
+    if not store.is_dir():
+        return []
+    cases: list[Case] = []
+    for path in sorted(store.glob("CASE-*.json"), reverse=True):
+        try:
+            cases.append(Case.from_dict(json.loads(path.read_text(encoding="utf-8"))))
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError, AttributeError, OSError):
+            continue
+    return cases
 
 
 def load_case(store: Path, case_id: str) -> Case:

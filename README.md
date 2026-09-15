@@ -9,9 +9,9 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. Stage **S3**: L0 playbooks split by `integrated` / `cloud`. No cluster credentials.
+Pre-alpha. Stage **S4**: local L0 web UI on loopback. No cluster credentials.
 
-Local web UI and MCP are not in this commit.
+MCP is not in this commit. L1 inspect is not in this commit.
 
 ## Two lanes
 
@@ -55,6 +55,14 @@ dorisops case refuse CASE-xxxx --reason "no jumphost"
 `--mode cloud` keeps them.
 
 Private playbooks: `--playbook-dir /path/to/pack` (do not commit customer CIR).
+
+## Local web (loopback)
+
+```bash
+dorisops web --bind 127.0.0.1:8787
+```
+
+Open http://127.0.0.1:8787/ — paste an alert, copy commands, paste stdout back. The process never talks to Doris. Binding `0.0.0.0` is rejected.
 
 ## Cluster config
 

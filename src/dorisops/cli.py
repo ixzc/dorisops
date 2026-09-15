@@ -5,16 +5,15 @@ import sys
 from pathlib import Path
 
 from dorisops import __version__
-from dorisops.case import (
-    CaseStoreError,
-    default_store,
-    load_case,
-    open_case,
-    save_case,
-)
-from dorisops.engine import refuse_case, reply_case
-from dorisops.playbook import PlaybookError, load_all, match_alert
+from dorisops.case import CaseStoreError, default_store
+from dorisops.playbook import PlaybookError
 from dorisops.render import render
+from dorisops.service import (
+    open_from_alert,
+    refuse_from_reason,
+    reply_from_text,
+    show_from_id,
+)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -56,7 +55,18 @@ def main(argv: list[str] | None = None) -> int:
     refuse_p.add_argument("case_id")
     refuse_p.add_argument("--reason", required=True, help="Why the pack was not executed")
 
+    web_p = sub.add_parser("web", help="Local L0 browser UI (loopback only)")
+    _add_store(web_p)
+    _add_playbook_dir(web_p)
+    web_p.add_argument(
+        "--bind",
+        default="127.0.0.1:8787",
+        help="Loopback host:port (default 127.0.0.1:8787). Public binds are rejected.",
+    )
+
     args = parser.parse_args(argv)
+    if args.cmd == "web":
+        return _cmd_web(args)
     if args.cmd != "case":
         parser.error("unknown command")
         return 2
@@ -95,27 +105,24 @@ def _store(args: argparse.Namespace) -> Path:
     return args.store or default_store()
 
 
-def _load_books(args: argparse.Namespace):
-    return load_all(list(getattr(args, "playbook_dir", []) or []))
+def _dirs(args: argparse.Namespace) -> list[Path]:
+    return list(getattr(args, "playbook_dir", []) or [])
 
 
 def _cmd_open(args: argparse.Namespace) -> int:
     try:
-        books = _load_books(args)
-    except PlaybookError as exc:
+        case, path, matched = open_from_alert(args.alert, args.mode, _store(args), _dirs(args))
+    except (PlaybookError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
-    hit = match_alert(args.alert, args.mode, books)
-    case = open_case(args.alert, args.mode, hit.book, mismatch=hit.mismatch)
-    path = save_case(case, _store(args))
     sys.stdout.write(render(case))
     sys.stdout.write(f"saved: {path}\n")
-    return 0 if hit.book else 2
+    return 0 if matched else 2
 
 
 def _cmd_show(args: argparse.Namespace) -> int:
     try:
-        case = load_case(_store(args), args.case_id)
+        case = show_from_id(_store(args), args.case_id)
     except CaseStoreError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
@@ -124,43 +131,47 @@ def _cmd_show(args: argparse.Namespace) -> int:
 
 
 def _cmd_reply(args: argparse.Namespace) -> int:
-    store = _store(args)
-    try:
-        case = load_case(store, args.case_id)
-        books = _load_books(args)
-    except (CaseStoreError, PlaybookError) as exc:
-        sys.stderr.write(f"error: {exc}\n")
-        return 2
     path: Path = args.output_file
     if not path.is_file():
         sys.stderr.write(f"error: output file not found: {path}\n")
         return 2
     text = path.read_text(encoding="utf-8", errors="replace")
-    book = None
-    if case.playbook_id and not case.mode_mismatch:
-        book = next((item for item in books if item.id == case.playbook_id), None)
     try:
-        reply_case(case, text, str(path), book)
-    except ValueError as exc:
+        case = reply_from_text(
+            _store(args),
+            args.case_id,
+            text,
+            _dirs(args),
+            source=str(path),
+        )
+    except (CaseStoreError, PlaybookError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
-    saved = save_case(case, store, replace=True)
     sys.stdout.write(render(case))
-    sys.stdout.write(f"saved: {saved}\n")
+    sys.stdout.write(f"saved: {_store(args) / (case.id + '.json')}\n")
     return 0
 
 
 def _cmd_refuse(args: argparse.Namespace) -> int:
-    store = _store(args)
     try:
-        case = load_case(store, args.case_id)
-        refuse_case(case, args.reason)
+        case = refuse_from_reason(_store(args), args.case_id, args.reason)
     except (CaseStoreError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
-    saved = save_case(case, store, replace=True)
     sys.stdout.write(render(case))
-    sys.stdout.write(f"saved: {saved}\n")
+    sys.stdout.write(f"saved: {_store(args) / (case.id + '.json')}\n")
+    return 0
+
+
+def _cmd_web(args: argparse.Namespace) -> int:
+    from dorisops.web import parse_bind, serve
+
+    try:
+        host, port = parse_bind(args.bind)
+    except ValueError as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        return 2
+    serve(host, port, _store(args), _dirs(args))
     return 0
 
 

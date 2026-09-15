@@ -9,9 +9,9 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. Stage **S5**: L1 read-only inspect. Missing credentials downgrade to L0.
+Pre-alpha. Stage **S6**: cloud-only MetaService `/status` and BE `file_cache` metrics. Integrated mode refuses those probes.
 
-MCP is not in this commit. Cloud MetaService HTTP is S6.
+MCP is not in this commit.
 
 ## Two lanes
 
@@ -68,14 +68,14 @@ Open http://127.0.0.1:8787/ — paste an alert, copy commands, paste stdout back
 
 ## Cluster config / L1 inspect
 
-Copy [`examples/cluster.example.yaml`](examples/cluster.example.yaml) to a gitignored `cluster.yaml`. Leave `CHANGE_ME` in place and the command stays on L0 — it will not open a MySQL or HTTP connection.
+Copy [`examples/cluster.example.yaml`](examples/cluster.example.yaml) (integrated) or [`examples/cluster.cloud.example.yaml`](examples/cluster.cloud.example.yaml) (cloud) to a gitignored `cluster.yaml`. Leave `CHANGE_ME` in place and the command stays on L0 — it will not open a MySQL or HTTP connection.
 
 ```bash
 dorisops inspect                          # no yaml → L0, tells you how to open a case
 dorisops inspect --cluster ./cluster.yaml # placeholders → L0; real read-only user → SHOW + HTTP
 ```
 
-Whitelist only: `SHOW FRONTENDS` / `SHOW BACKENDS` / `SHOW COMPUTE GROUPS` (cloud), HTTP `/api/health`, `/metrics`, `/api/profile` (with `--query-id`). No `SET`, `ALTER`, SSH, or MetaService HTTP (S6).
+Whitelist: `SHOW FRONTENDS` / `SHOW BACKENDS` / `SHOW COMPUTE GROUPS` (cloud), HTTP `/api/health`, `/metrics`, `/api/profile` (with `--query-id`), and MetaService `/status` (cloud only). `mode: integrated` refuses MS HTTP and `file_cache` metrics even if `meta_service` is in the file. Cloud yaml without `meta_service.http_url` prints **待人执行**, not a fake OK. No `SET`, `ALTER`, SSH, FDB cli, or Recycler writes.
 
 ## License
 

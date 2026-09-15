@@ -29,6 +29,7 @@ class ClusterConfig:
     mysql_password: str = field(repr=False)
     fe_http_url: str
     backend_http_urls: tuple[str, ...] = ()
+    ms_http_url: str = ""
     path: Path | None = None
 
     def credentials_ready(self) -> bool:
@@ -72,8 +73,15 @@ def load_cluster_yaml(path: Path) -> ClusterConfig:
         mysql_password=str(fe.get("mysql_password") or ""),
         fe_http_url=_as_str(fe.get("http_url")),
         backend_http_urls=tuple(urls),
+        ms_http_url=_ms_http_url(data.get("meta_service")),
         path=path,
     )
+
+
+def _ms_http_url(meta: object) -> str:
+    if not isinstance(meta, dict):
+        return ""
+    return _as_str(meta.get("http_url"))
 
 
 def _as_str(value: object) -> str:

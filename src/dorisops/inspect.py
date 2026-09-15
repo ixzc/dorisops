@@ -22,6 +22,7 @@ HTTP_PATH_WHITELIST = (
     "/metrics",
     "/api/profile",
     "/api/query_profile",
+    "/status",  # MetaService brpc status page (cloud only at call site)
 )
 
 FORBIDDEN_SQL = re.compile(
@@ -237,14 +238,7 @@ def _run_probes(
     if cfg.mode == "cloud":
         _probe_show(report, mysql, "SHOW COMPUTE GROUPS")
     else:
-        report.add(
-            ProbeResult(
-                name="SHOW COMPUTE GROUPS",
-                ok=True,
-                skipped=True,
-                detail="integrated mode: skip (cloud-only)",
-            )
-        )
+        report.add(_refuse_integrated("SHOW COMPUTE GROUPS"))
 
     if cfg.fe_http_url:
         _probe_http(report, http, cfg.fe_http_url, "/api/health", "FE /api/health")
@@ -267,6 +261,9 @@ def _run_probes(
             ProbeResult(name="BE HTTP", ok=True, skipped=True, detail="no backends.http_url")
         )
 
+    _probe_ms_status(report, cfg, http)
+    _probe_file_cache(report, cfg, http)
+
     if query_id and cfg.fe_http_url:
         q = quote(query_id, safe="")
         _probe_http(
@@ -288,6 +285,114 @@ def _run_probes(
 
     report.notes.append("L1 inspect is read-only whitelist only; no SET/ALTER/SSH.")
     return report
+
+
+def _refuse_integrated(tool: str) -> ProbeResult:
+    return ProbeResult(
+        name=tool,
+        ok=True,
+        skipped=True,
+        detail="当前是 integrated，拒绝 " + tool,
+    )
+
+
+def _probe_ms_status(report: InspectReport, cfg: ClusterConfig, http: HttpTransport) -> None:
+    if cfg.mode != "cloud":
+        report.add(_refuse_integrated("MS /status"))
+        return
+    if not cfg.ms_http_url:
+        report.add(
+            ProbeResult(
+                name="MS /status",
+                ok=True,
+                skipped=True,
+                detail=(
+                    "未配置 meta_service.http_url；待人执行 "
+                    "curl http://$MS_PORT/status（brpc 默认 5000）。不假装已探过。"
+                ),
+            )
+        )
+        report.notes.append(
+            "cloud: MetaService HTTP 待人执行（cluster.yaml 未配 meta_service.http_url）"
+        )
+        return
+    path = "/status"
+    assert_readonly_http_path(path)
+    url = cfg.ms_http_url.rstrip("/") + path
+    try:
+        status, body = http.get(url)
+    except Exception as exc:
+        report.add(ProbeResult(name="MS /status", ok=False, detail=str(exc)))
+        return
+    ok = 200 <= status < 300
+    lowered = body.lower()
+    if "metaservice" in lowered or "meta_service" in lowered:
+        marker = "page names MetaService"
+    else:
+        marker = "MetaService not in page (do not invent role)"
+    snippet = body.strip().replace("\n", " ")[:80]
+    report.add(ProbeResult(name="MS /status", ok=ok, detail=f"HTTP {status}; {marker}; {snippet}"))
+
+
+def _probe_file_cache(report: InspectReport, cfg: ClusterConfig, http: HttpTransport) -> None:
+    if cfg.mode != "cloud":
+        report.add(_refuse_integrated("BE file_cache metrics"))
+        return
+    if not cfg.backend_http_urls:
+        report.add(
+            ProbeResult(
+                name="BE file_cache metrics",
+                ok=True,
+                skipped=True,
+                detail=(
+                    "未配置 backends.http_url；待人执行 "
+                    "curl BE:8040/metrics | grep file_cache。不假装已探过。"
+                ),
+            )
+        )
+        report.notes.append(
+            "cloud: BE file_cache metrics 待人执行（cluster.yaml 未配 backends.http_url）"
+        )
+        return
+    path = "/metrics"
+    assert_readonly_http_path(path)
+    url = cfg.backend_http_urls[0].rstrip("/") + path
+    try:
+        status, body = http.get(url)
+    except Exception as exc:
+        report.add(ProbeResult(name="BE file_cache metrics", ok=False, detail=str(exc)))
+        return
+    if not (200 <= status < 300):
+        report.add(
+            ProbeResult(
+                name="BE file_cache metrics",
+                ok=False,
+                detail=f"HTTP {status}",
+            )
+        )
+        return
+    lines = [
+        ln
+        for ln in body.splitlines()
+        if "file_cache" in ln.lower() and not ln.lstrip().startswith("#")
+    ]
+    if not lines:
+        report.add(
+            ProbeResult(
+                name="BE file_cache metrics",
+                ok=True,
+                detail=f"HTTP {status}; no file_cache lines in /metrics (do not invent hit rate)",
+            )
+        )
+        return
+    preview = lines[0].strip()[:100]
+    report.add(
+        ProbeResult(
+            name="BE file_cache metrics",
+            ok=True,
+            detail=f"HTTP {status}; {len(lines)} file_cache line(s); e.g. {preview}",
+        )
+    )
 
 
 def _probe_show(report: InspectReport, mysql: MysqlTransport, sql: str) -> str | None:

@@ -1,0 +1,21 @@
+# Copy to cluster.yaml (gitignored). Cloud = storage-compute separation.
+# P0–P1 never execute writes. Leave CHANGE_ME for L0 diagnosis cases.
+# Integrated clusters: use cluster.example.yaml instead — inspect will refuse
+# MetaService HTTP and file_cache metrics if mode is integrated.
+
+name: lab-cloud
+mode: cloud
+
+fe:
+  mysql_host: 127.0.0.1
+  mysql_port: 9030
+  mysql_user: READONLY_USER
+  mysql_password: CHANGE_ME
+  http_url: http://127.0.0.1:8030
+
+backends:
+  - http_url: http://127.0.0.1:8040
+
+# Read-only MetaService brpc (default 5000). Omit to keep inspect on 「待人执行」.
+meta_service:
+  http_url: http://127.0.0.1:5000

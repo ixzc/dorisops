@@ -17,5 +17,6 @@ backends:
   - http_url: http://127.0.0.1:8040
 
 # Cloud only. Omit entirely for integrated clusters.
+# inspect refuses MetaService HTTP when mode is integrated, even if this is filled.
 # meta_service:
 #   http_url: http://127.0.0.1:5000

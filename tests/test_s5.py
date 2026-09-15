@@ -82,6 +82,10 @@ def _http() -> FakeHttp:
             "http://127.0.0.1:8030/api/health": (200, '{"status":"OK"}'),
             "http://127.0.0.1:8030/metrics": (200, "doris_fe_query_total 1"),
             "http://127.0.0.1:8040/api/health": (200, "OK"),
+            "http://127.0.0.1:8040/metrics": (
+                200,
+                "doris_be_cpu 1\nfile_cache_hits 10\nfile_cache_size 99\n",
+            ),
             "http://127.0.0.1:8030/api/profile?query_id=q1": (200, "Query: q1"),
         }
     )
@@ -157,6 +161,10 @@ def test_inspect_mocked_alive(tmp_path: Path) -> None:
     assert "http://127.0.0.1:8030/api/health" in http.urls
     assert "http://127.0.0.1:8040/api/health" in http.urls
     assert not any("/status" in url for url in http.urls)
+    assert not any(url.endswith(":8040/metrics") for url in http.urls)
+    refused = {p.name for p in report.probes if p.skipped and "当前是 integrated" in p.detail}
+    assert "MS /status" in refused
+    assert "BE file_cache metrics" in refused
 
 
 def test_inspect_records_alive_false_from_output(tmp_path: Path) -> None:
@@ -180,7 +188,10 @@ def test_cloud_runs_compute_groups(tmp_path: Path) -> None:
     assert "SHOW COMPUTE GROUPS" in mysql.queries
     cg = next(p for p in report.probes if p.name == "SHOW COMPUTE GROUPS")
     assert cg.ok and not cg.skipped
-    assert not any("meta_service" in p.name.lower() or "/status" in p.name for p in report.probes)
+    ms = next(p for p in report.probes if p.name == "MS /status")
+    assert ms.skipped is True
+    assert "待人执行" in ms.detail
+    assert "[OK] MS /status" not in report.to_text()
 
 
 def test_query_id_fetches_profile(tmp_path: Path) -> None:
@@ -212,10 +223,13 @@ def test_http_whitelist() -> None:
     assert_readonly_http_path("/api/health")
     assert_readonly_http_path("/metrics")
     assert_readonly_http_path("/api/profile?query_id=abc")
+    assert_readonly_http_path("/status")
     with pytest.raises(InspectError):
         assert_readonly_http_path("/api/bootstrap")
     with pytest.raises(InspectError):
         assert_readonly_http_path("/rest/v1/system")
+    with pytest.raises(InspectError):
+        assert_readonly_http_path("/MetaService/http")
 
 
 def test_password_not_in_repr(tmp_path: Path) -> None:

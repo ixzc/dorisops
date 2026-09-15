@@ -83,6 +83,24 @@ class InspectReport:
             lines.extend(self.notes)
         return "\n".join(lines) + "\n"
 
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "cluster": self.cluster,
+            "mode": self.mode,
+            "level": self.level,
+            "probes": [
+                {
+                    "name": probe.name,
+                    "ok": probe.ok,
+                    "detail": probe.detail,
+                    "skipped": probe.skipped,
+                }
+                for probe in self.probes
+            ],
+            "notes": list(self.notes),
+            "text": self.to_text(),
+        }
+
 
 class _NoRedirect(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):  # noqa: ANN001

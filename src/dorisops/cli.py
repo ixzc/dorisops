@@ -86,11 +86,18 @@ def main(argv: list[str] | None = None) -> int:
         default="integrated",
         help="Default cluster mode for webhook payloads that omit mode.",
     )
+    web_p.add_argument(
+        "--cluster",
+        type=Path,
+        default=None,
+        help="Optional cluster.yaml for the L1 probe block. Omit to stay L0-only.",
+    )
 
     insp_p = sub.add_parser(
         "inspect",
         help="L1 read-only probe (downgrades to L0 without credentials)",
     )
+    _add_store(insp_p)
     insp_p.add_argument(
         "--cluster",
         type=Path,
@@ -101,6 +108,17 @@ def main(argv: list[str] | None = None) -> int:
         "--query-id",
         default=None,
         help="Optional. Fetch FE /api/profile for this query_id (read-only).",
+    )
+    insp_p.add_argument(
+        "--watch",
+        action="store_true",
+        help="Repeat inspect on an interval and save inspect-latest.json (read-only).",
+    )
+    insp_p.add_argument(
+        "--interval",
+        type=int,
+        default=60,
+        help="Seconds between --watch ticks (minimum 30).",
     )
 
     mcp_p = sub.add_parser("mcp", help="Stdio MCP server for Cursor (read-only tools)")
@@ -249,6 +267,7 @@ def _cmd_web(args: argparse.Namespace) -> int:
         _dirs(args),
         webhook_token=token,
         webhook_mode=args.webhook_mode,
+        cluster=args.cluster,
     )
     return 0
 
@@ -256,7 +275,18 @@ def _cmd_web(args: argparse.Namespace) -> int:
 def _cmd_inspect(args: argparse.Namespace) -> int:
     from dorisops.cluster import ClusterError
     from dorisops.inspect import InspectError
+    from dorisops.watch import MIN_INTERVAL, watch_loop
 
+    if args.watch:
+        if args.interval < MIN_INTERVAL:
+            sys.stderr.write(f"error: --interval must be >= {MIN_INTERVAL} seconds\n")
+            return 2
+        return watch_loop(
+            args.cluster,
+            _store(args),
+            args.interval,
+            query_id=args.query_id,
+        )
     try:
         report, code = inspect_from_path(args.cluster, query_id=args.query_id)
     except (ClusterError, InspectError, ValueError) as exc:

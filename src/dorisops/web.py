@@ -12,15 +12,18 @@ import threading
 from dorisops import __version__
 from dorisops.case import Case, CaseStoreError
 from dorisops.engine import show_banner
+from dorisops.inspect import HttpTransport, InspectError, MysqlTransport
 from dorisops.playbook import PlaybookError
 from dorisops.service import (
     cases_for_index,
     export_from_id,
+    inspect_from_path,
     open_from_alert,
     refuse_from_reason,
     reply_from_text,
     show_from_id,
 )
+from dorisops.watch import load_snapshot, save_snapshot
 from dorisops.webhook import extract_alert, payload_from_body, provided_token, token_matches
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
@@ -53,15 +56,24 @@ def serve(
     *,
     webhook_token: str = "",
     webhook_mode: str = "integrated",
+    cluster: Path | None = None,
 ) -> None:
     httpd = make_server(
-        host, port, store, extra_dirs, webhook_token=webhook_token, webhook_mode=webhook_mode
+        host,
+        port,
+        store,
+        extra_dirs,
+        webhook_token=webhook_token,
+        webhook_mode=webhook_mode,
+        cluster=cluster,
     )
     bind_host, bind_port = httpd.server_address[:2]
     hook = "enabled" if webhook_token else "disabled"
+    inspect = "enabled" if cluster is not None else "off"
+    io = "L1 probe whitelist only" if cluster is not None else "no cluster I/O"
     sys.stderr.write(
         f"dorisops web {__version__}  http://{bind_host}:{bind_port}/  "
-        f"(loopback only, webhook {hook}, no cluster I/O)\n"
+        f"(loopback only, webhook {hook}, inspect {inspect}, {io})\n"
     )
     try:
         httpd.serve_forever()
@@ -79,13 +91,22 @@ def make_server(
     *,
     webhook_token: str = "",
     webhook_mode: str = "integrated",
+    cluster: Path | None = None,
+    mysql: MysqlTransport | None = None,
+    http: HttpTransport | None = None,
 ) -> HTTPServer:
     if host not in LOOPBACK_HOSTS:
         raise ValueError("web bind must be loopback (127.0.0.1 or localhost)")
     if webhook_mode not in {"integrated", "cloud"}:
         raise ValueError("webhook mode must be integrated or cloud")
     handler = _handler_class(
-        store, list(extra_dirs or []), webhook_token=webhook_token, webhook_mode=webhook_mode
+        store,
+        list(extra_dirs or []),
+        webhook_token=webhook_token,
+        webhook_mode=webhook_mode,
+        cluster=cluster,
+        mysql=mysql,
+        http=http,
     )
     return HTTPServer((host, port), handler)
 
@@ -95,6 +116,9 @@ def _handler_class(
     extra_dirs: list[Path],
     webhook_token: str = "",
     webhook_mode: str = "integrated",
+    cluster: Path | None = None,
+    mysql: MysqlTransport | None = None,
+    http: HttpTransport | None = None,
 ):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args) -> None:
@@ -106,7 +130,14 @@ def _handler_class(
                 return
             parsed = urlparse(self.path)
             if parsed.path == "/":
-                self._html(200, render_index(cases_for_index(store)))
+                self._html(
+                    200,
+                    render_index(
+                        cases_for_index(store),
+                        snapshot=load_snapshot(store),
+                        probe_enabled=cluster is not None,
+                    ),
+                )
                 return
             match = re.fullmatch(r"/cases/([^/]+)", parsed.path)
             if match:
@@ -125,6 +156,9 @@ def _handler_class(
             parsed = urlparse(self.path)
             if parsed.path == "/hooks/alert":
                 self._webhook()
+                return
+            if parsed.path == "/inspect":
+                self._probe()
                 return
             fields = self._form()
             if fields is None:
@@ -200,6 +234,25 @@ def _handler_class(
                     ),
                 },
             )
+
+        def _probe(self) -> None:
+            self._discard_body()
+            if cluster is None:
+                self._html(
+                    403,
+                    _page(
+                        "L1 off",
+                        "<p>探活未开通。启动时加上 <code>--cluster ./cluster.yaml</code>。</p>",
+                    ),
+                )
+                return
+            try:
+                report, code = inspect_from_path(cluster, mysql=mysql, http=http)
+                save_snapshot(store, report, code, "web")
+            except (InspectError, OSError, ValueError) as exc:
+                self._html(400, _page("Inspect error", f"<p>{escape(str(exc))}</p>"))
+                return
+            self._redirect("/#inspect")
 
         def _show_case(self, case_id: str) -> None:
             try:
@@ -300,7 +353,11 @@ def _handler_class(
     return Handler
 
 
-def render_index(cases: list[Case]) -> str:
+def render_index(
+    cases: list[Case],
+    snapshot: dict[str, object] | None = None,
+    probe_enabled: bool = False,
+) -> str:
     rows = []
     for case in cases:
         rows.append(
@@ -320,6 +377,19 @@ def render_index(cases: list[Case]) -> str:
             f"<tbody>{''.join(rows)}</tbody></table>"
         )
     )
+    inspect_block = _render_inspect_block(snapshot) if probe_enabled else ""
+    if probe_enabled:
+        foot = (
+            "探活只走 SHOW/HTTP 白名单，没有写操作按钮。"
+            "Webhook：配置 <code>--webhook-token</code> 后 <code>POST /hooks/alert</code>"
+            "（仍仅 loopback）。"
+        )
+    else:
+        foot = (
+            "L1 只读凭据尚未开通。没有去查集群、没有写操作按钮。"
+            "Webhook：配置 <code>--webhook-token</code> 后 <code>POST /hooks/alert</code>"
+            "（仍仅 loopback，不查集群）。"
+        )
     body = f"""
 <section>
   <h1>开一张 L0 单</h1>
@@ -337,14 +407,36 @@ def render_index(cases: list[Case]) -> str:
     <button type="submit">开单</button>
   </form>
 </section>
+{inspect_block}
 <section>
   <h2>Cases</h2>
   {table}
 </section>
-<p class="foot">L1 只读凭据尚未开通。没有去查集群、没有写操作按钮。
-Webhook：配置 <code>--webhook-token</code> 后 <code>POST /hooks/alert</code>（仍仅 loopback，不查集群）。</p>
+<p class="foot">{foot}</p>
 """
     return _page("DorisOps", body)
+
+
+def _render_inspect_block(snapshot: dict[str, object] | None) -> str:
+    if snapshot and snapshot.get("text"):
+        captured = escape(str(snapshot.get("captured_at") or ""))
+        notice = escape(str(snapshot.get("notice") or ""))
+        body = (
+            f"<p class='foot'>快照 {captured}。{notice}</p>"
+            f"<pre>{escape(str(snapshot.get('text')))}</pre>"
+        )
+    else:
+        body = "<p>尚未探活。点按钮跑一轮只读检查，或 <code>dorisops inspect --watch</code>。</p>"
+    return f"""
+<section id="inspect">
+  <h2>L1 只读探活</h2>
+  <p>只跑 SHOW / HTTP 白名单。不会 SET、ALTER、杀查询或 SSH。</p>
+  <form method="post" action="/inspect">
+    <button type="submit">探活（只读）</button>
+  </form>
+  {body}
+</section>
+"""
 
 
 def render_case(case: Case) -> str:
@@ -485,9 +577,20 @@ def start_background(
     *,
     webhook_token: str = "",
     webhook_mode: str = "integrated",
+    cluster: Path | None = None,
+    mysql: MysqlTransport | None = None,
+    http: HttpTransport | None = None,
 ) -> tuple[HTTPServer, threading.Thread]:
     httpd = make_server(
-        host, port, store, extra_dirs, webhook_token=webhook_token, webhook_mode=webhook_mode
+        host,
+        port,
+        store,
+        extra_dirs,
+        webhook_token=webhook_token,
+        webhook_mode=webhook_mode,
+        cluster=cluster,
+        mysql=mysql,
+        http=http,
     )
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

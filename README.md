@@ -9,7 +9,7 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. **P1b**: loopback webhook `POST /hooks/alert` opens an L0 case (token required). P0 golden eval remains `pytest -q tests/test_golden.py`.
+Pre-alpha. **P1c**: L1 inspect `--watch` snapshots + optional loopback probe block. P0 golden eval remains `pytest -q tests/test_golden.py`.
 
 ## Two lanes
 
@@ -65,9 +65,11 @@ Private playbooks: `--playbook-dir /path/to/pack` (do not commit customer CIR).
 dorisops web --bind 127.0.0.1:8787
 # optional: accept alerts from a local forwarder (still loopback, still L0)
 dorisops web --bind 127.0.0.1:8787 --webhook-token "$TOKEN" --webhook-mode integrated
+# optional L1 probe block on the same page (still loopback, still read-only)
+dorisops web --bind 127.0.0.1:8787 --cluster ./cluster.yaml
 ```
 
-Open http://127.0.0.1:8787/ — paste an alert, copy commands, paste stdout back. The process never talks to Doris. Binding `0.0.0.0` is rejected.
+Open http://127.0.0.1:8787/ — paste an alert, copy commands, paste stdout back. Without `--cluster` the process never talks to Doris. Binding `0.0.0.0` is rejected. With `--cluster`, the index shows a **探活（只读）** button that runs the same SHOW/HTTP whitelist as `inspect`; placeholders stay on L0. `--watch` writes `inspect-latest.json` next to cases (a snapshot, not Grafana).
 
 Webhook is off unless `--webhook-token` or `$DORISOPS_WEBHOOK_TOKEN` is set:
 
@@ -87,6 +89,7 @@ Copy [`examples/cluster.example.yaml`](examples/cluster.example.yaml) (integrate
 ```bash
 dorisops inspect                          # no yaml → L0, tells you how to open a case
 dorisops inspect --cluster ./cluster.yaml # placeholders → L0; real read-only user → SHOW + HTTP
+dorisops inspect --cluster ./cluster.yaml --watch --interval 60
 ```
 
 Whitelist: `SHOW FRONTENDS` / `SHOW BACKENDS` / `SHOW COMPUTE GROUPS` (cloud), HTTP `/api/health`, `/metrics`, `/api/profile` (with `--query-id`), and MetaService `/status` (cloud only). `mode: integrated` refuses MS HTTP and `file_cache` metrics even if `meta_service` is in the file. Cloud yaml without `meta_service.http_url` prints **待人执行**, not a fake OK. No `SET`, `ALTER`, SSH, FDB cli, or Recycler writes.

@@ -179,13 +179,22 @@ def builtin_dir() -> Path:
     return Path(__file__).resolve().parent / "playbooks"
 
 
-def load_all(extra_dirs: list[Path] | None = None) -> list[Playbook]:
+def load_all(
+    extra_dirs: list[Path] | None = None,
+    sop_dirs: list[Path] | None = None,
+) -> list[Playbook]:
+    from dorisops.sop2 import load_sop2_dir
+
     books: list[Playbook] = []
     seen: set[str] = set()
     extra = extra_dirs or []
+    sops = sop_dirs or []
     for directory in extra:
         if not directory.is_dir():
             raise PlaybookError(f"playbook dir not found: {directory}")
+    for directory in sops:
+        if not directory.is_dir():
+            raise PlaybookError(f"sop dir not found: {directory}")
     for directory in [builtin_dir(), *extra]:
         if not directory.is_dir():
             continue
@@ -193,6 +202,12 @@ def load_all(extra_dirs: list[Path] | None = None) -> list[Playbook]:
             book = load_playbook(path)
             if book.id in seen:
                 books = [item for item in books if item.id != book.id]
+            seen.add(book.id)
+            books.append(book)
+    for directory in sops:
+        for book in load_sop2_dir(directory):
+            if book.id in seen:
+                continue
             seen.add(book.id)
             books.append(book)
     return books

@@ -10,4 +10,5 @@ Built-in playbooks ship in `src/dorisops/playbooks/`.
 | `metaservice-down` | cloud only |
 
 Do not commit customer runbooks, CIR ids, warehouse ids, or jumphost names.
-Load a private pack with `--playbook-dir`.
+Load a private TOML pack with `--playbook-dir`.
+Load local SOP 2.0 markdown with `--sop-dir` / `$DORISOPS_SOP` (gap-fill only; overlapping ids keep the built-in tree).

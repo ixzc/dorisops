@@ -17,8 +17,11 @@ from dorisops.playbook import PlaybookError, load_all, match_alert
 from dorisops.render import export_report
 
 
-def load_books(extra_dirs: list[Path] | None) -> list:
-    return load_all(list(extra_dirs or []))
+def load_books(
+    extra_dirs: list[Path] | None = None,
+    sop_dirs: list[Path] | None = None,
+) -> list:
+    return load_all(list(extra_dirs or []), list(sop_dirs or []))
 
 
 def open_from_alert(
@@ -26,13 +29,14 @@ def open_from_alert(
     mode: str,
     store: Path,
     extra_dirs: list[Path] | None = None,
+    sop_dirs: list[Path] | None = None,
 ) -> tuple[Case, Path, bool]:
     text = alert.strip()
     if not text:
         raise ValueError("alert is empty")
     if mode not in {"integrated", "cloud"}:
         raise ValueError("mode must be integrated or cloud")
-    hit = match_alert(text, mode, load_books(extra_dirs))
+    hit = match_alert(text, mode, load_books(extra_dirs, sop_dirs))
     case = open_case(text, mode, hit.book, mismatch=hit.mismatch)
     path = save_case(case, store)
     return case, path, hit.book is not None
@@ -48,9 +52,10 @@ def reply_from_text(
     text: str,
     extra_dirs: list[Path] | None = None,
     source: str = "web",
+    sop_dirs: list[Path] | None = None,
 ) -> Case:
     case = load_case(store, case_id)
-    books = load_books(extra_dirs)
+    books = load_books(extra_dirs, sop_dirs)
     book = None
     if case.playbook_id and not case.mode_mismatch:
         book = next((item for item in books if item.id == case.playbook_id), None)

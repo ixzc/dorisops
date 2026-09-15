@@ -57,6 +57,7 @@ def serve(
     webhook_token: str = "",
     webhook_mode: str = "integrated",
     cluster: Path | None = None,
+    sop_dirs: list[Path] | None = None,
 ) -> None:
     httpd = make_server(
         host,
@@ -66,6 +67,7 @@ def serve(
         webhook_token=webhook_token,
         webhook_mode=webhook_mode,
         cluster=cluster,
+        sop_dirs=sop_dirs,
     )
     bind_host, bind_port = httpd.server_address[:2]
     hook = "enabled" if webhook_token else "disabled"
@@ -94,6 +96,7 @@ def make_server(
     cluster: Path | None = None,
     mysql: MysqlTransport | None = None,
     http: HttpTransport | None = None,
+    sop_dirs: list[Path] | None = None,
 ) -> HTTPServer:
     if host not in LOOPBACK_HOSTS:
         raise ValueError("web bind must be loopback (127.0.0.1 or localhost)")
@@ -107,6 +110,7 @@ def make_server(
         cluster=cluster,
         mysql=mysql,
         http=http,
+        sop_dirs=list(sop_dirs or []),
     )
     return HTTPServer((host, port), handler)
 
@@ -119,6 +123,7 @@ def _handler_class(
     cluster: Path | None = None,
     mysql: MysqlTransport | None = None,
     http: HttpTransport | None = None,
+    sop_dirs: list[Path] | None = None,
 ):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args) -> None:
@@ -167,13 +172,17 @@ def _handler_class(
                 if parsed.path == "/cases":
                     alert = (fields.get("alert") or [""])[0]
                     mode = (fields.get("mode") or ["integrated"])[0]
-                    case, _, _matched = open_from_alert(alert, mode, store, extra_dirs)
+                    case, _, _matched = open_from_alert(
+                        alert, mode, store, extra_dirs, sop_dirs
+                    )
                     self._redirect(f"/cases/{case.id}")
                     return
                 match = re.fullmatch(r"/cases/([^/]+)/reply", parsed.path)
                 if match:
                     text = (fields.get("output") or [""])[0]
-                    reply_from_text(store, match.group(1), text, extra_dirs, source="web")
+                    reply_from_text(
+                        store, match.group(1), text, extra_dirs, source="web", sop_dirs=sop_dirs
+                    )
                     self._redirect(f"/cases/{match.group(1)}")
                     return
                 match = re.fullmatch(r"/cases/([^/]+)/refuse", parsed.path)
@@ -212,7 +221,7 @@ def _handler_class(
             try:
                 payload = payload_from_body(raw, self.headers.get("Content-Type") or "")
                 alert, mode = extract_alert(payload, webhook_mode)
-                case, _, matched = open_from_alert(alert, mode, store, extra_dirs)
+                case, _, matched = open_from_alert(alert, mode, store, extra_dirs, sop_dirs)
             except json.JSONDecodeError:
                 self._json(400, {"error": "invalid JSON"})
                 return
@@ -580,6 +589,7 @@ def start_background(
     cluster: Path | None = None,
     mysql: MysqlTransport | None = None,
     http: HttpTransport | None = None,
+    sop_dirs: list[Path] | None = None,
 ) -> tuple[HTTPServer, threading.Thread]:
     httpd = make_server(
         host,
@@ -591,6 +601,7 @@ def start_background(
         cluster=cluster,
         mysql=mysql,
         http=http,
+        sop_dirs=sop_dirs,
     )
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()

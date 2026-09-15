@@ -1,0 +1,12 @@
+id = "be-node-down"
+title = "TOML IN SOP DIR"
+modes = ["integrated"]
+essence = "must not load from --sop-dir"
+impact = "x"
+do_now = "x"
+stop_line = "x"
+never_do = "x"
+pending_note = "x"
+
+[[matchers]]
+pattern = "be\\\\s+node\\\\s+down"

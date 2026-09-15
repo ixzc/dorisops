@@ -9,7 +9,7 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. **P1c**: L1 inspect `--watch` snapshots + optional loopback probe block. P0 golden eval remains `pytest -q tests/test_golden.py`.
+Pre-alpha. **P1d**: local SOP 2.0 markdown gap-fill (`--sop-dir` / `$DORISOPS_SOP`). P0 golden eval remains `pytest -q tests/test_golden.py`.
 
 ## Two lanes
 
@@ -57,7 +57,7 @@ dorisops case export CASE-xxxx            # Markdown 转发稿，不是实时快
 `--mode integrated` hides cloud-only commands (for example `SHOW COMPUTE GROUPS`).
 `--mode cloud` keeps them.
 
-Private playbooks: `--playbook-dir /path/to/pack` (do not commit customer CIR).
+Private playbooks: `--playbook-dir /path/to/pack` (TOML, may override built-ins). Local SOP 2.0 markdown: `--sop-dir /path/to/local/sop2` or `$DORISOPS_SOP`. SOP 2.0 **gap-fills** alerts the built-in pack does not cover and does not import CIR tables. Do not commit customer CIR.
 
 ## Local web (loopback)
 

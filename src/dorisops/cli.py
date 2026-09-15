@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -170,7 +171,17 @@ def _add_playbook_dir(parser: argparse.ArgumentParser) -> None:
         action="append",
         type=Path,
         default=[],
-        help="Extra playbook directory (repeatable). Built-in pack always loads.",
+        help="Extra TOML playbook directory (repeatable). Built-in pack always loads.",
+    )
+    parser.add_argument(
+        "--sop-dir",
+        action="append",
+        type=Path,
+        default=[],
+        help=(
+            "Local SOP 2.0 markdown directory (repeatable). Gap-fills alerts the "
+            "built-in pack does not cover. Or set $DORISOPS_SOP. Do not commit CIR."
+        ),
     )
 
 
@@ -178,13 +189,38 @@ def _store(args: argparse.Namespace) -> Path:
     return args.store or default_store()
 
 
-def _dirs(args: argparse.Namespace) -> list[Path]:
-    return list(getattr(args, "playbook_dir", []) or [])
+def _playbook_dirs(args: argparse.Namespace) -> list[Path]:
+    out: list[Path] = []
+    for item in getattr(args, "playbook_dir", []) or []:
+        path = item.expanduser()
+        if path not in out:
+            out.append(path)
+    return out
+
+
+def _sop_dirs(args: argparse.Namespace) -> list[Path]:
+    out: list[Path] = []
+    for item in getattr(args, "sop_dir", []) or []:
+        path = item.expanduser()
+        if path not in out:
+            out.append(path)
+    env = os.environ.get("DORISOPS_SOP", "").strip()
+    if not env:
+        return out
+    path = Path(env).expanduser()
+    if not path.is_dir():
+        sys.stderr.write(f"warning: $DORISOPS_SOP is not a directory, ignoring: {path}\n")
+        return out
+    if path not in out:
+        out.append(path)
+    return out
 
 
 def _cmd_open(args: argparse.Namespace) -> int:
     try:
-        case, path, matched = open_from_alert(args.alert, args.mode, _store(args), _dirs(args))
+        case, path, matched = open_from_alert(
+            args.alert, args.mode, _store(args), _playbook_dirs(args), _sop_dirs(args)
+        )
     except (PlaybookError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
@@ -214,8 +250,9 @@ def _cmd_reply(args: argparse.Namespace) -> int:
             _store(args),
             args.case_id,
             text,
-            _dirs(args),
+            _playbook_dirs(args),
             source=str(path),
+            sop_dirs=_sop_dirs(args),
         )
     except (CaseStoreError, PlaybookError, ValueError) as exc:
         sys.stderr.write(f"error: {exc}\n")
@@ -264,10 +301,11 @@ def _cmd_web(args: argparse.Namespace) -> int:
         host,
         port,
         _store(args),
-        _dirs(args),
+        _playbook_dirs(args),
         webhook_token=token,
         webhook_mode=args.webhook_mode,
         cluster=args.cluster,
+        sop_dirs=_sop_dirs(args),
     )
     return 0
 
@@ -306,7 +344,9 @@ def _cmd_mcp(args: argparse.Namespace) -> int:
     if cluster is None:
         env = os.environ.get("DORISOPS_CLUSTER", "").strip()
         cluster = Path(env) if env else None
-    session = session_from_env(_store(args), _dirs(args), cluster)
+    session = session_from_env(
+        _store(args), _playbook_dirs(args), cluster, sop_dirs=_sop_dirs(args)
+    )
     try:
         serve_stdio(session)
     except ImportError as exc:

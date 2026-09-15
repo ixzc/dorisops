@@ -36,11 +36,12 @@ class McpSession:
     store: Path
     extra_dirs: list[Path] = field(default_factory=list)
     cluster: Path | None = None
+    sop_dirs: list[Path] = field(default_factory=list)
 
     def case_open(self, alert: str, mode: str) -> str:
         try:
             case, path, matched = open_from_alert(
-                alert, mode, self.store, self.extra_dirs
+                alert, mode, self.store, self.extra_dirs, self.sop_dirs
             )
         except (PlaybookError, ValueError) as exc:
             return f"error: {exc}"
@@ -69,6 +70,7 @@ class McpSession:
                 text,
                 self.extra_dirs,
                 source="mcp",
+                sop_dirs=self.sop_dirs,
             )
         except (CaseStoreError, PlaybookError, ValueError) as exc:
             return f"error: {exc}"
@@ -111,6 +113,7 @@ def session_from_env(
     store: Path | None = None,
     extra_dirs: list[Path] | None = None,
     cluster: Path | None = None,
+    sop_dirs: list[Path] | None = None,
 ) -> McpSession:
     if cluster is None:
         env = os.environ.get("DORISOPS_CLUSTER", "").strip()
@@ -119,4 +122,5 @@ def session_from_env(
         store=store or default_store(),
         extra_dirs=list(extra_dirs or []),
         cluster=cluster,
+        sop_dirs=list(sop_dirs or []),
     )

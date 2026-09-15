@@ -75,6 +75,17 @@ def main(argv: list[str] | None = None) -> int:
         default="127.0.0.1:8787",
         help="Loopback host:port (default 127.0.0.1:8787). Public binds are rejected.",
     )
+    web_p.add_argument(
+        "--webhook-token",
+        default=None,
+        help="Enable POST /hooks/alert. Or set $DORISOPS_WEBHOOK_TOKEN. Disabled if empty.",
+    )
+    web_p.add_argument(
+        "--webhook-mode",
+        choices=("integrated", "cloud"),
+        default="integrated",
+        help="Default cluster mode for webhook payloads that omit mode.",
+    )
 
     insp_p = sub.add_parser(
         "inspect",
@@ -220,14 +231,25 @@ def _cmd_export(args: argparse.Namespace) -> int:
 
 
 def _cmd_web(args: argparse.Namespace) -> int:
+    import os
+
     from dorisops.web import parse_bind, serve
+    from dorisops.webhook import resolve_token
 
     try:
         host, port = parse_bind(args.bind)
     except ValueError as exc:
         sys.stderr.write(f"error: {exc}\n")
         return 2
-    serve(host, port, _store(args), _dirs(args))
+    token = resolve_token(args.webhook_token, os.environ.get("DORISOPS_WEBHOOK_TOKEN"))
+    serve(
+        host,
+        port,
+        _store(args),
+        _dirs(args),
+        webhook_token=token,
+        webhook_mode=args.webhook_mode,
+    )
     return 0
 
 

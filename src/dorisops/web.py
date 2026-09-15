@@ -4,6 +4,7 @@ from html import escape
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
+import json
 import re
 import sys
 import threading
@@ -20,6 +21,7 @@ from dorisops.service import (
     reply_from_text,
     show_from_id,
 )
+from dorisops.webhook import extract_alert, payload_from_body, provided_token, token_matches
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 MAX_BODY = 512 * 1024
@@ -43,11 +45,23 @@ def parse_bind(spec: str) -> tuple[str, int]:
     return host, port
 
 
-def serve(host: str, port: int, store: Path, extra_dirs: list[Path] | None = None) -> None:
-    httpd = make_server(host, port, store, extra_dirs)
+def serve(
+    host: str,
+    port: int,
+    store: Path,
+    extra_dirs: list[Path] | None = None,
+    *,
+    webhook_token: str = "",
+    webhook_mode: str = "integrated",
+) -> None:
+    httpd = make_server(
+        host, port, store, extra_dirs, webhook_token=webhook_token, webhook_mode=webhook_mode
+    )
     bind_host, bind_port = httpd.server_address[:2]
+    hook = "enabled" if webhook_token else "disabled"
     sys.stderr.write(
-        f"dorisops web {__version__}  http://{bind_host}:{bind_port}/  (loopback only, no cluster I/O)\n"
+        f"dorisops web {__version__}  http://{bind_host}:{bind_port}/  "
+        f"(loopback only, webhook {hook}, no cluster I/O)\n"
     )
     try:
         httpd.serve_forever()
@@ -62,14 +76,26 @@ def make_server(
     port: int,
     store: Path,
     extra_dirs: list[Path] | None = None,
+    *,
+    webhook_token: str = "",
+    webhook_mode: str = "integrated",
 ) -> HTTPServer:
     if host not in LOOPBACK_HOSTS:
         raise ValueError("web bind must be loopback (127.0.0.1 or localhost)")
-    handler = _handler_class(store, list(extra_dirs or []))
+    if webhook_mode not in {"integrated", "cloud"}:
+        raise ValueError("webhook mode must be integrated or cloud")
+    handler = _handler_class(
+        store, list(extra_dirs or []), webhook_token=webhook_token, webhook_mode=webhook_mode
+    )
     return HTTPServer((host, port), handler)
 
 
-def _handler_class(store: Path, extra_dirs: list[Path]):
+def _handler_class(
+    store: Path,
+    extra_dirs: list[Path],
+    webhook_token: str = "",
+    webhook_mode: str = "integrated",
+):
     class Handler(BaseHTTPRequestHandler):
         def log_message(self, fmt: str, *args) -> None:
             sys.stderr.write("%s - %s\n" % (self.address_string(), fmt % args))
@@ -97,6 +123,9 @@ def _handler_class(store: Path, extra_dirs: list[Path]):
                 self._html(403, _page("Forbidden", "<p>Host must be loopback.</p>"))
                 return
             parsed = urlparse(self.path)
+            if parsed.path == "/hooks/alert":
+                self._webhook()
+                return
             fields = self._form()
             if fields is None:
                 return
@@ -130,6 +159,48 @@ def _handler_class(store: Path, extra_dirs: list[Path]):
                 return
             self._html(404, _page("Not found", "<p>Not found.</p>"))
 
+        def _webhook(self) -> None:
+            if not webhook_token:
+                self._discard_body()
+                self._json(403, {"error": "webhook disabled; start web with --webhook-token"})
+                return
+            token = provided_token(
+                self.headers.get("Authorization") or "",
+                self.headers.get("X-DorisOps-Token") or "",
+            )
+            if not token_matches(token, webhook_token):
+                self._discard_body()
+                self._json(401, {"error": "unauthorized"})
+                return
+            raw = self._read_body(as_json=True)
+            if raw is None:
+                return
+            try:
+                payload = payload_from_body(raw, self.headers.get("Content-Type") or "")
+                alert, mode = extract_alert(payload, webhook_mode)
+                case, _, matched = open_from_alert(alert, mode, store, extra_dirs)
+            except json.JSONDecodeError:
+                self._json(400, {"error": "invalid JSON"})
+                return
+            except (ValueError, PlaybookError, CaseStoreError) as exc:
+                self._json(400, {"error": str(exc)})
+                return
+            self._json(
+                201,
+                {
+                    "case_id": case.id,
+                    "matched": matched,
+                    "playbook_id": case.playbook_id,
+                    "mode": case.mode,
+                    "lane": "L0",
+                    "location": f"/cases/{case.id}",
+                    "note": (
+                        "L0 diagnosis case opened. No cluster was queried. "
+                        "Do not invent Alive or replica counts."
+                    ),
+                },
+            )
+
         def _show_case(self, case_id: str) -> None:
             try:
                 case = show_from_id(store, case_id)
@@ -157,26 +228,59 @@ def _handler_class(store: Path, extra_dirs: list[Path]):
             host = header.rsplit("]", 1)[0].lstrip("[").split(":")[0]
             return host in LOOPBACK_HOSTS or host == ""
 
-        def _form(self) -> dict[str, list[str]] | None:
+        def _discard_body(self) -> None:
             raw_len = self.headers.get("Content-Length") or "0"
             try:
                 length = int(raw_len)
             except ValueError:
-                self._html(400, _page("Bad request", "<p>Invalid Content-Length.</p>"))
+                return
+            if length <= 0:
+                return
+            self.rfile.read(min(length, MAX_BODY))
+
+        def _read_body(self, *, as_json: bool = False) -> str | None:
+            def fail(code: int, message: str) -> None:
+                if as_json:
+                    self._json(code, {"error": message})
+                    return
+                title = "Too large" if code == 413 else "Bad request"
+                self._html(code, _page(title, f"<p>{escape(message)}</p>"))
+
+            raw_len = self.headers.get("Content-Length") or "0"
+            try:
+                length = int(raw_len)
+            except ValueError:
+                fail(400, "Invalid Content-Length.")
                 return None
             if length < 0:
-                self._html(400, _page("Bad request", "<p>Invalid Content-Length.</p>"))
+                fail(400, "Invalid Content-Length.")
                 return None
             if length > MAX_BODY:
-                self._html(413, _page("Too large", "<p>Body too large.</p>"))
+                self.rfile.read(MAX_BODY)
+                fail(413, "Body too large.")
                 return None
             raw = self.rfile.read(length) if length else b""
             try:
-                decoded = raw.decode("utf-8")
+                return raw.decode("utf-8")
             except UnicodeDecodeError:
-                self._html(400, _page("Bad request", "<p>Body must be UTF-8.</p>"))
+                fail(400, "Body must be UTF-8.")
+                return None
+
+        def _form(self) -> dict[str, list[str]] | None:
+            decoded = self._read_body()
+            if decoded is None:
                 return None
             return parse_qs(decoded, keep_blank_values=True)
+
+        def _json(self, code: int, data: dict) -> None:
+            payload = json.dumps(data, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.wfile.write(payload)
 
         def _html(self, code: int, body: str) -> None:
             payload = body.encode("utf-8")
@@ -237,7 +341,8 @@ def render_index(cases: list[Case]) -> str:
   <h2>Cases</h2>
   {table}
 </section>
-<p class="foot">L1 只读凭据尚未开通。没有去查集群、没有写操作按钮。</p>
+<p class="foot">L1 只读凭据尚未开通。没有去查集群、没有写操作按钮。
+Webhook：配置 <code>--webhook-token</code> 后 <code>POST /hooks/alert</code>（仍仅 loopback，不查集群）。</p>
 """
     return _page("DorisOps", body)
 
@@ -377,8 +482,13 @@ def start_background(
     port: int,
     store: Path,
     extra_dirs: list[Path] | None = None,
+    *,
+    webhook_token: str = "",
+    webhook_mode: str = "integrated",
 ) -> tuple[HTTPServer, threading.Thread]:
-    httpd = make_server(host, port, store, extra_dirs)
+    httpd = make_server(
+        host, port, store, extra_dirs, webhook_token=webhook_token, webhook_mode=webhook_mode
+    )
     thread = threading.Thread(target=httpd.serve_forever, daemon=True)
     thread.start()
     return httpd, thread

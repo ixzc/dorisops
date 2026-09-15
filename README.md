@@ -9,7 +9,7 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. **P1a**: SQLite case store + forwardable Markdown export. P0 golden eval remains `pytest -q tests/test_golden.py`.
+Pre-alpha. **P1b**: loopback webhook `POST /hooks/alert` opens an L0 case (token required). P0 golden eval remains `pytest -q tests/test_golden.py`.
 
 ## Two lanes
 
@@ -63,9 +63,22 @@ Private playbooks: `--playbook-dir /path/to/pack` (do not commit customer CIR).
 
 ```bash
 dorisops web --bind 127.0.0.1:8787
+# optional: accept alerts from a local forwarder (still loopback, still L0)
+dorisops web --bind 127.0.0.1:8787 --webhook-token "$TOKEN" --webhook-mode integrated
 ```
 
 Open http://127.0.0.1:8787/ — paste an alert, copy commands, paste stdout back. The process never talks to Doris. Binding `0.0.0.0` is rejected.
+
+Webhook is off unless `--webhook-token` or `$DORISOPS_WEBHOOK_TOKEN` is set:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8787/hooks/alert \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"alert":"be node down on host X","mode":"integrated"}'
+```
+
+Generic `{alert,mode}` and Alertmanager `alerts[]` both work. Auth is `Authorization: Bearer` or `X-DorisOps-Token` (query-string tokens are rejected so they never hit access logs). The hook only opens an L0 case; it does not query the cluster or invent `Alive`. `resolved` alerts are ignored.
 
 ## Cluster config / L1 inspect
 

@@ -9,9 +9,7 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. Stage **S7**: read-only MCP tools for Cursor (`dorisops mcp`). No cluster credentials → L0, no invented Alive.
-
-S8 golden eval is next.
+Pre-alpha. **P0 golden eval (S8)** is in `tests/test_golden.py`. Default CI does not connect to a cluster.
 
 ## Two lanes
 
@@ -100,6 +98,17 @@ Point Cursor at stdio (see [`examples/cursor-mcp.json`](examples/cursor-mcp.json
 ```
 
 Optional env: `DORISOPS_HOME` (case store), `DORISOPS_CLUSTER` (default `cluster.yaml` for inspect). Tools: `case_open`, `case_show`, `case_reply`, `case_refuse`, `inspect_cluster`. They are read-only. Without credentials `inspect_cluster` returns L0 and must not be treated as a health check.
+
+## Tests
+
+```bash
+python3 -m pytest -q                 # no live cluster; E1–E6 plus the rest
+python3 -m pytest -q tests/test_golden.py   # P0 gate only
+# optional L1 smoke (not in GitHub Actions):
+DORISOPS_LIVE_CLUSTER=./cluster.yaml python3 -m pytest -q -m live
+```
+
+E1–E6: `be node down` with no invented facts; memory pressure without `/mem_tracker`; MetaService + integrated mismatch; show-before-reply stays pending; `-235` is versions not a query; Web open+reply shares the CLI case state machine.
 
 ## License
 

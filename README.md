@@ -9,16 +9,16 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. Stage **S4**: local L0 web UI on loopback. No cluster credentials.
+Pre-alpha. Stage **S5**: L1 read-only inspect. Missing credentials downgrade to L0.
 
-MCP is not in this commit. L1 inspect is not in this commit.
+MCP is not in this commit. Cloud MetaService HTTP is S6.
 
 ## Two lanes
 
 | Lane | What you grant | What you get |
 |------|----------------|--------------|
 | **L0 diagnosis case** | Nothing (no FE/BE account) | Paste an alert → get a command pack. You run commands. |
-| **L1 inspect** | Read-only FE MySQL + FE/BE HTTP | Not shipped yet. Missing credentials will downgrade to L0. |
+| **L1 inspect** | Read-only FE MySQL + FE/BE HTTP | `dorisops inspect --cluster ./cluster.yaml`. Placeholder passwords never connect. |
 
 **P0–P1 are read-only.** The case may describe a stop-the-bleeding line. It will not `SET`, `ALTER`, repair replicas, kill queries, or SSH. It will not invent `Alive=false`.
 
@@ -28,6 +28,8 @@ MCP is not in this commit. L1 inspect is not in this commit.
 git clone git@github.com:ixzc/dorisops.git
 cd dorisops
 python3 -m pip install -e ".[dev]"   # 3.9+; 3.9/3.10 会自动装 tomli
+# optional L1 inspect extras:
+python3 -m pip install -e ".[inspect]"
 ```
 
 ## Open a case (no cluster)
@@ -64,9 +66,16 @@ dorisops web --bind 127.0.0.1:8787
 
 Open http://127.0.0.1:8787/ — paste an alert, copy commands, paste stdout back. The process never talks to Doris. Binding `0.0.0.0` is rejected.
 
-## Cluster config
+## Cluster config / L1 inspect
 
-See [`examples/cluster.example.yaml`](examples/cluster.example.yaml) for the upcoming L1 inspect file. Copy to a gitignored `cluster.yaml` when that stage lands.
+Copy [`examples/cluster.example.yaml`](examples/cluster.example.yaml) to a gitignored `cluster.yaml`. Leave `CHANGE_ME` in place and the command stays on L0 — it will not open a MySQL or HTTP connection.
+
+```bash
+dorisops inspect                          # no yaml → L0, tells you how to open a case
+dorisops inspect --cluster ./cluster.yaml # placeholders → L0; real read-only user → SHOW + HTTP
+```
+
+Whitelist only: `SHOW FRONTENDS` / `SHOW BACKENDS` / `SHOW COMPUTE GROUPS` (cloud), HTTP `/api/health`, `/metrics`, `/api/profile` (with `--query-id`). No `SET`, `ALTER`, SSH, or MetaService HTTP (S6).
 
 ## License
 

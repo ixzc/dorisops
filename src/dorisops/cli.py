@@ -9,6 +9,7 @@ from dorisops.case import CaseStoreError, default_store
 from dorisops.playbook import PlaybookError
 from dorisops.render import render
 from dorisops.service import (
+    inspect_from_path,
     open_from_alert,
     refuse_from_reason,
     reply_from_text,
@@ -64,9 +65,27 @@ def main(argv: list[str] | None = None) -> int:
         help="Loopback host:port (default 127.0.0.1:8787). Public binds are rejected.",
     )
 
+    insp_p = sub.add_parser(
+        "inspect",
+        help="L1 read-only probe (downgrades to L0 without credentials)",
+    )
+    insp_p.add_argument(
+        "--cluster",
+        type=Path,
+        default=None,
+        help="cluster.yaml with read-only FE MySQL + HTTP. Omit to stay on L0.",
+    )
+    insp_p.add_argument(
+        "--query-id",
+        default=None,
+        help="Optional. Fetch FE /api/profile for this query_id (read-only).",
+    )
+
     args = parser.parse_args(argv)
     if args.cmd == "web":
         return _cmd_web(args)
+    if args.cmd == "inspect":
+        return _cmd_inspect(args)
     if args.cmd != "case":
         parser.error("unknown command")
         return 2
@@ -173,6 +192,19 @@ def _cmd_web(args: argparse.Namespace) -> int:
         return 2
     serve(host, port, _store(args), _dirs(args))
     return 0
+
+
+def _cmd_inspect(args: argparse.Namespace) -> int:
+    from dorisops.cluster import ClusterError
+    from dorisops.inspect import InspectError
+
+    try:
+        report, code = inspect_from_path(args.cluster, query_id=args.query_id)
+    except (ClusterError, InspectError, ValueError) as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        return 2
+    sys.stdout.write(report.to_text())
+    return code
 
 
 if __name__ == "__main__":

@@ -28,6 +28,7 @@ dorisops = "dorisops.cli:main"
 
 [project.optional-dependencies]
 dev = ["pytest>=8"]
+inspect = ["pymysql>=1.1.0", "PyYAML>=6.0"]
 
 [project.urls]
 Homepage = "https://github.com/ixzc/dorisops"

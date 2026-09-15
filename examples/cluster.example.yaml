@@ -1,5 +1,5 @@
-# Copy to cluster.yaml (gitignored) when you enable L1 read-only inspect.
-# P0–P1 never execute writes. Leave this file unused for L0 diagnosis cases.
+# Copy to cluster.yaml (gitignored) and fill a read-only FE user for L1 inspect.
+# P0–P1 never execute writes. Leave CHANGE_ME for L0 diagnosis cases.
 
 name: lab
 # integrated = shared-nothing FE/BE

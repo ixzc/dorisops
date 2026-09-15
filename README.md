@@ -9,7 +9,7 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. **P0 golden eval (S8)** is in `tests/test_golden.py`. Default CI does not connect to a cluster.
+Pre-alpha. **P1a**: SQLite case store + forwardable Markdown export. P0 golden eval remains `pytest -q tests/test_golden.py`.
 
 ## Two lanes
 
@@ -41,12 +41,13 @@ dorisops case open --alert "metaservice node down" --mode cloud
 # --mode integrated on a cloud-only alert prints a hint; it will not emit clone/rebalance commands
 ```
 
-JSON is stored under `$DORISOPS_HOME/cases` or `~/.dorisops/cases`.
+JSON is stored under `$DORISOPS_HOME/cases` or `~/.dorisops/cases` (SQLite `cases.sqlite` plus JSON sidecars).
 
 ```bash
 dorisops case show   CASE-xxxx
 dorisops case reply  CASE-xxxx --output-file show-backends.txt
 dorisops case refuse CASE-xxxx --reason "no jumphost"
+dorisops case export CASE-xxxx            # Markdown 转发稿，不是实时快照
 ```
 
 `show` before any reply only says the case is waiting. It will not invent `Alive=false`.
@@ -97,7 +98,7 @@ Point Cursor at stdio (see [`examples/cursor-mcp.json`](examples/cursor-mcp.json
 }
 ```
 
-Optional env: `DORISOPS_HOME` (case store), `DORISOPS_CLUSTER` (default `cluster.yaml` for inspect). Tools: `case_open`, `case_show`, `case_reply`, `case_refuse`, `inspect_cluster`. They are read-only. Without credentials `inspect_cluster` returns L0 and must not be treated as a health check.
+Optional env: `DORISOPS_HOME` (case store), `DORISOPS_CLUSTER` (default `cluster.yaml` for inspect). Tools: `case_open`, `case_show`, `case_reply`, `case_refuse`, `case_export`, `inspect_cluster`. They are read-only. Without credentials `inspect_cluster` returns L0 and must not be treated as a health check.
 
 ## Tests
 

@@ -14,6 +14,7 @@ def test_tool_names_match_plan() -> None:
         "case_show",
         "case_reply",
         "case_refuse",
+        "case_export",
         "inspect_cluster",
     )
 

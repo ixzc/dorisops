@@ -14,6 +14,7 @@ from dorisops.engine import show_banner
 from dorisops.playbook import PlaybookError
 from dorisops.service import (
     cases_for_index,
+    export_from_id,
     open_from_alert,
     refuse_from_reason,
     reply_from_text,
@@ -85,6 +86,10 @@ def _handler_class(store: Path, extra_dirs: list[Path]):
             if match:
                 self._show_case(match.group(1))
                 return
+            match = re.fullmatch(r"/cases/([^/]+)/export\.md", parsed.path)
+            if match:
+                self._export_case(match.group(1))
+                return
             self._html(404, _page("Not found", "<p>Not found.</p>"))
 
         def do_POST(self) -> None:
@@ -132,6 +137,20 @@ def _handler_class(store: Path, extra_dirs: list[Path]):
                 self._html(404, _page("Not found", f"<p>{escape(str(exc))}</p>"))
                 return
             self._html(200, render_case(case))
+
+        def _export_case(self, case_id: str) -> None:
+            try:
+                text = export_from_id(store, case_id, "md")
+            except CaseStoreError as exc:
+                self._html(404, _page("Not found", f"<p>{escape(str(exc))}</p>"))
+                return
+            payload = text.encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/markdown; charset=utf-8")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+            self.wfile.write(payload)
 
         def _loopback_host(self) -> bool:
             header = (self.headers.get("Host") or "").split("/")[0]
@@ -262,7 +281,8 @@ def render_case(case: Case) -> str:
             f"<pre>{escape(_clip(str(item.get('text', '')), 4000))}</pre>"
         )
     body = f"""
-<p><a href="/">← 全部 cases</a></p>
+<p><a href="/">← 全部 cases</a>
+ · <a href="/cases/{escape(case.id)}/export.md">转发稿（Markdown）</a></p>
 <h1>{escape(case.id)}</h1>
 <ul>
   <li>档位：{escape(case.lane)}（不开集群连接）</li>

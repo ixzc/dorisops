@@ -9,6 +9,7 @@ from dorisops.case import CaseStoreError, default_store
 from dorisops.playbook import PlaybookError
 from dorisops.render import render
 from dorisops.service import (
+    export_from_id,
     inspect_from_path,
     open_from_alert,
     refuse_from_reason,
@@ -55,6 +56,16 @@ def main(argv: list[str] | None = None) -> int:
     _add_store(refuse_p)
     refuse_p.add_argument("case_id")
     refuse_p.add_argument("--reason", required=True, help="Why the pack was not executed")
+
+    export_p = case_sub.add_parser("export", help="Forwardable Markdown/JSON report (not a live snapshot)")
+    _add_store(export_p)
+    export_p.add_argument("case_id")
+    export_p.add_argument(
+        "--format",
+        choices=("md", "json"),
+        default="md",
+        help="md (default, for chat/email) or json",
+    )
 
     web_p = sub.add_parser("web", help="Local L0 browser UI (loopback only)")
     _add_store(web_p)
@@ -109,6 +120,8 @@ def main(argv: list[str] | None = None) -> int:
         return _cmd_reply(args)
     if args.case_cmd == "refuse":
         return _cmd_refuse(args)
+    if args.case_cmd == "export":
+        return _cmd_export(args)
     parser.error("unknown command")
     return 2
 
@@ -118,7 +131,7 @@ def _add_store(parser: argparse.ArgumentParser) -> None:
         "--store",
         type=Path,
         default=None,
-        help="Directory for case JSON (default: $DORISOPS_HOME/cases or ~/.dorisops/cases)",
+        help="Directory for cases (SQLite cases.sqlite + JSON sidecars; default $DORISOPS_HOME/cases)",
     )
 
 
@@ -191,6 +204,18 @@ def _cmd_refuse(args: argparse.Namespace) -> int:
         return 2
     sys.stdout.write(render(case))
     sys.stdout.write(f"saved: {_store(args) / (case.id + '.json')}\n")
+    return 0
+
+
+def _cmd_export(args: argparse.Namespace) -> int:
+    try:
+        text = export_from_id(_store(args), args.case_id, args.format)
+    except (CaseStoreError, ValueError) as exc:
+        sys.stderr.write(f"error: {exc}\n")
+        return 2
+    sys.stdout.write(text)
+    if not text.endswith("\n"):
+        sys.stdout.write("\n")
     return 0
 
 

@@ -4,7 +4,7 @@ from dorisops.mcp_api import McpSession, TOOL_NAMES
 
 INSTRUCTIONS = (
     "Read-only Apache Doris ops workbench. P0–P1 never SET, ALTER, SSH, or kill queries. "
-    "case_open / case_show / case_reply / case_refuse never connect to the cluster. "
+    "case_open / case_show / case_reply / case_refuse / case_export never connect to the cluster. "
     "inspect_cluster without real credentials returns L0; do not invent Alive=false or topology."
 )
 
@@ -45,6 +45,11 @@ def build_server(session: McpSession):
     def case_refuse(case_id: str, reason: str) -> str:
         """Record why a command pack cannot be run. Keeps the case open. Read-only; no cluster writes."""
         return session.case_refuse(case_id, reason)
+
+    @mcp.tool()
+    def case_export(case_id: str, fmt: str = "md") -> str:
+        """Forwardable Markdown/JSON report. Not a live cluster snapshot. fmt is md or json."""
+        return session.case_export(case_id, fmt)
 
     @mcp.tool()
     def inspect_cluster(cluster_path: str = "", query_id: str = "") -> str:

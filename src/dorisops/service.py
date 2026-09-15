@@ -14,6 +14,7 @@ from dorisops.cluster import ClusterConfig, ClusterError, load_cluster_yaml
 from dorisops.engine import refuse_case, reply_case
 from dorisops.inspect import InspectReport, MysqlTransport, HttpTransport, inspect_cluster, l0_report
 from dorisops.playbook import PlaybookError, load_all, match_alert
+from dorisops.render import export_report
 
 
 def load_books(extra_dirs: list[Path] | None) -> list:
@@ -69,6 +70,10 @@ def cases_for_index(store: Path) -> list[Case]:
     return list_cases(store)
 
 
+def export_from_id(store: Path, case_id: str, fmt: str = "md") -> str:
+    return export_report(show_from_id(store, case_id), fmt)
+
+
 def inspect_from_path(
     cluster: Path | None,
     *,
@@ -96,6 +101,7 @@ __all__ = [
     "ClusterError",
     "PlaybookError",
     "cases_for_index",
+    "export_from_id",
     "inspect_from_path",
     "open_from_alert",
     "refuse_from_reason",

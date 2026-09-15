@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dorisops.case import Case
 from dorisops.engine import show_banner
+import json
 
 
 def render(case: Case) -> str:
@@ -89,6 +90,22 @@ def render(case: Case) -> str:
     if case.conclusion:
         lines.extend(["## 结论", case.conclusion, ""])
     return "\n".join(lines)
+
+
+EXPORT_BANNER = (
+    "> DorisOps 诊断单转发稿。这不是实时集群快照。"
+    "数字只来自回贴证据；未回贴前不要把告警标题当成已核实的 Alive。\n"
+)
+
+
+def export_report(case: Case, fmt: str = "md") -> str:
+    if fmt not in {"md", "json"}:
+        raise ValueError("format must be md or json")
+    if fmt == "json":
+        payload = json.loads(case.to_json())
+        payload["dorisops_notice"] = EXPORT_BANNER.strip()
+        return json.dumps(payload, ensure_ascii=False, indent=2) + "\n"
+    return EXPORT_BANNER + "\n" + render(case)
 
 
 def _clip(text: str, limit: int = 4000) -> str:

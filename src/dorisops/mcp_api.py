@@ -8,6 +8,7 @@ from dorisops.case import CaseStoreError, default_store
 from dorisops.playbook import PlaybookError
 from dorisops.render import render
 from dorisops.service import (
+    export_from_id,
     inspect_from_path,
     open_from_alert,
     refuse_from_reason,
@@ -20,6 +21,7 @@ TOOL_NAMES = (
     "case_show",
     "case_reply",
     "case_refuse",
+    "case_export",
     "inspect_cluster",
 )
 
@@ -78,6 +80,12 @@ class McpSession:
         except (CaseStoreError, ValueError) as exc:
             return f"error: {exc}"
         return render(case)
+
+    def case_export(self, case_id: str, fmt: str = "md") -> str:
+        try:
+            return export_from_id(self.store, case_id.strip(), fmt or "md")
+        except (CaseStoreError, ValueError) as exc:
+            return f"error: {exc}"
 
     def inspect_cluster(self, cluster_path: str = "", query_id: str = "") -> str:
         raw = cluster_path.strip()

@@ -6,6 +6,7 @@ from pathlib import Path
 import json
 import os
 import secrets
+import sqlite3
 
 from dorisops.playbook import Command, Playbook, commands_for_node, mode_mismatch_note
 
@@ -157,12 +158,70 @@ class CaseStoreError(ValueError):
     """Missing or ambiguous case id."""
 
 
-def find_case_path(store: Path, case_id: str) -> Path:
+DB_NAME = "cases.sqlite"
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS cases (
+  id TEXT PRIMARY KEY,
+  created_at TEXT NOT NULL,
+  updated_at TEXT,
+  status TEXT,
+  payload TEXT NOT NULL
+);
+"""
+
+
+def db_path(store: Path) -> Path:
+    return store / DB_NAME
+
+
+def _connect(store: Path) -> sqlite3.Connection:
+    store.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path(store)), timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.execute(_SCHEMA)
+    return conn
+
+
+def _validate_id(case_id: str) -> str:
     token = case_id.strip()
-    if not token or any(ch in token for ch in "/\\:*?[]"):
+    if not token or any(ch in token for ch in "/\\:*?[]%_"):
         raise CaseStoreError("invalid case id")
     if ".." in token:
         raise CaseStoreError("invalid case id")
+    return token
+
+
+def _migrate_json(conn: sqlite3.Connection, store: Path) -> None:
+    if not store.is_dir():
+        return
+    for path in store.glob("CASE-*.json"):
+        exists = conn.execute("SELECT 1 FROM cases WHERE id = ?", (path.stem,)).fetchone()
+        if exists:
+            continue
+        try:
+            case = Case.from_dict(json.loads(path.read_text(encoding="utf-8")))
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError, AttributeError, OSError):
+            continue
+        if case.id != path.stem:
+            continue
+        conn.execute(
+            "INSERT OR IGNORE INTO cases (id, created_at, updated_at, status, payload) VALUES (?, ?, ?, ?, ?)",
+            (case.id, case.created_at, case.updated_at, case.status, case.to_json()),
+        )
+
+
+def _upsert(conn: sqlite3.Connection, case: Case) -> None:
+    conn.execute(
+        "INSERT INTO cases (id, created_at, updated_at, status, payload) VALUES (?, ?, ?, ?, ?) "
+        "ON CONFLICT(id) DO UPDATE SET "
+        "updated_at = excluded.updated_at, status = excluded.status, payload = excluded.payload",
+        (case.id, case.created_at, case.updated_at, case.status, case.to_json()),
+    )
+
+
+def find_case_path(store: Path, case_id: str) -> Path:
+    token = _validate_id(case_id)
     exact = store / f"{token}.json"
     if exact.is_file():
         return exact
@@ -176,37 +235,75 @@ def find_case_path(store: Path, case_id: str) -> Path:
 
 
 def list_cases(store: Path) -> list[Case]:
-    if not store.is_dir():
+    if not store.exists():
         return []
+    conn = _connect(store)
+    try:
+        _migrate_json(conn, store)
+        conn.commit()
+        rows = conn.execute(
+            "SELECT payload FROM cases ORDER BY created_at DESC, id DESC"
+        ).fetchall()
+    finally:
+        conn.close()
     cases: list[Case] = []
-    for path in sorted(store.glob("CASE-*.json"), reverse=True):
+    for row in rows:
         try:
-            cases.append(Case.from_dict(json.loads(path.read_text(encoding="utf-8"))))
-        except (json.JSONDecodeError, TypeError, KeyError, ValueError, AttributeError, OSError):
+            cases.append(Case.from_dict(json.loads(row["payload"])))
+        except (json.JSONDecodeError, TypeError, KeyError, ValueError, AttributeError):
             continue
     return cases
 
 
 def load_case(store: Path, case_id: str) -> Case:
-    path = find_case_path(store, case_id)
+    token = _validate_id(case_id)
+    conn = _connect(store)
     try:
-        return Case.from_dict(json.loads(path.read_text(encoding="utf-8")))
-    except (json.JSONDecodeError, TypeError, KeyError) as exc:
-        raise CaseStoreError(f"invalid case file {path.name}: {exc}") from exc
+        _migrate_json(conn, store)
+        conn.commit()
+        row = conn.execute("SELECT payload FROM cases WHERE id = ?", (token,)).fetchone()
+        if row is None:
+            rows = conn.execute(
+                "SELECT id, payload FROM cases WHERE id LIKE ? ORDER BY id",
+                (token + "%",),
+            ).fetchall()
+            if len(rows) == 1:
+                row = rows[0]
+            elif not rows:
+                raise CaseStoreError(f"case not found: {token}")
+            else:
+                names = ", ".join(item["id"] for item in rows)
+                raise CaseStoreError(f"ambiguous case id {token!r}: {names}")
+        try:
+            return Case.from_dict(json.loads(row["payload"]))
+        except (json.JSONDecodeError, TypeError, KeyError) as exc:
+            raise CaseStoreError(f"invalid case record {token}: {exc}") from exc
+    finally:
+        conn.close()
 
 
 def save_case(case: Case, store: Path, *, replace: bool = False) -> Path:
     store.mkdir(parents=True, exist_ok=True)
-    if replace:
-        path = store / f"{case.id}.json"
-        path.write_text(case.to_json(), encoding="utf-8")
-        return path
-    for _ in range(8):
-        path = store / f"{case.id}.json"
-        try:
-            with path.open("x", encoding="utf-8") as fh:
-                fh.write(case.to_json())
-            return path
-        except FileExistsError:
-            case.id = new_case_id()
-    raise RuntimeError(f"could not allocate a unique case id in {store}")
+    conn = _connect(store)
+    try:
+        if replace:
+            _upsert(conn, case)
+        else:
+            for _ in range(8):
+                try:
+                    conn.execute(
+                        "INSERT INTO cases (id, created_at, updated_at, status, payload) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (case.id, case.created_at, case.updated_at, case.status, case.to_json()),
+                    )
+                    break
+                except sqlite3.IntegrityError:
+                    case.id = new_case_id()
+            else:
+                raise RuntimeError(f"could not allocate a unique case id in {store}")
+        conn.commit()
+    finally:
+        conn.close()
+    path = store / f"{case.id}.json"
+    path.write_text(case.to_json(), encoding="utf-8")
+    return path

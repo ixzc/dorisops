@@ -9,9 +9,9 @@ Supports **integrated** (shared-nothing) and **cloud** (storage-compute separati
 
 ## Status
 
-Pre-alpha. Stage **S6**: cloud-only MetaService `/status` and BE `file_cache` metrics. Integrated mode refuses those probes.
+Pre-alpha. Stage **S7**: read-only MCP tools for Cursor (`dorisops mcp`). No cluster credentials → L0, no invented Alive.
 
-MCP is not in this commit.
+S8 golden eval is next.
 
 ## Two lanes
 
@@ -30,6 +30,8 @@ cd dorisops
 python3 -m pip install -e ".[dev]"   # 3.9+; 3.9/3.10 会自动装 tomli
 # optional L1 inspect extras:
 python3 -m pip install -e ".[inspect]"
+# optional Cursor MCP:
+python3 -m pip install -e ".[mcp]"
 ```
 
 ## Open a case (no cluster)
@@ -76,6 +78,28 @@ dorisops inspect --cluster ./cluster.yaml # placeholders → L0; real read-only 
 ```
 
 Whitelist: `SHOW FRONTENDS` / `SHOW BACKENDS` / `SHOW COMPUTE GROUPS` (cloud), HTTP `/api/health`, `/metrics`, `/api/profile` (with `--query-id`), and MetaService `/status` (cloud only). `mode: integrated` refuses MS HTTP and `file_cache` metrics even if `meta_service` is in the file. Cloud yaml without `meta_service.http_url` prints **待人执行**, not a fake OK. No `SET`, `ALTER`, SSH, FDB cli, or Recycler writes.
+
+## Cursor MCP
+
+```bash
+python3 -m pip install -e ".[mcp]"
+dorisops mcp
+```
+
+Point Cursor at stdio (see [`examples/cursor-mcp.json`](examples/cursor-mcp.json)):
+
+```json
+{
+  "mcpServers": {
+    "dorisops": {
+      "command": "python3",
+      "args": ["-m", "dorisops", "mcp"]
+    }
+  }
+}
+```
+
+Optional env: `DORISOPS_HOME` (case store), `DORISOPS_CLUSTER` (default `cluster.yaml` for inspect). Tools: `case_open`, `case_show`, `case_reply`, `case_refuse`, `inspect_cluster`. They are read-only. Without credentials `inspect_cluster` returns L0 and must not be treated as a health check.
 
 ## License
 

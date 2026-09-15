@@ -81,11 +81,23 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional. Fetch FE /api/profile for this query_id (read-only).",
     )
 
+    mcp_p = sub.add_parser("mcp", help="Stdio MCP server for Cursor (read-only tools)")
+    _add_store(mcp_p)
+    _add_playbook_dir(mcp_p)
+    mcp_p.add_argument(
+        "--cluster",
+        type=Path,
+        default=None,
+        help="Default cluster.yaml for inspect_cluster (or $DORISOPS_CLUSTER).",
+    )
+
     args = parser.parse_args(argv)
     if args.cmd == "web":
         return _cmd_web(args)
     if args.cmd == "inspect":
         return _cmd_inspect(args)
+    if args.cmd == "mcp":
+        return _cmd_mcp(args)
     if args.cmd != "case":
         parser.error("unknown command")
         return 2
@@ -205,6 +217,25 @@ def _cmd_inspect(args: argparse.Namespace) -> int:
         return 2
     sys.stdout.write(report.to_text())
     return code
+
+
+def _cmd_mcp(args: argparse.Namespace) -> int:
+    import os
+
+    from dorisops.mcp_api import session_from_env
+    from dorisops.mcp_server import serve_stdio
+
+    cluster = args.cluster
+    if cluster is None:
+        env = os.environ.get("DORISOPS_CLUSTER", "").strip()
+        cluster = Path(env) if env else None
+    session = session_from_env(_store(args), _dirs(args), cluster)
+    try:
+        serve_stdio(session)
+    except ImportError as exc:
+        sys.stderr.write(f"error: {exc}\nInstall with: pip install 'dorisops[mcp]'\n")
+        return 2
+    return 0
 
 
 if __name__ == "__main__":
